@@ -1261,6 +1261,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2020-11 - disable loop() function if PTT is active
   2020-10 - mqtt subscribe /ptt (SSB only)
           - GPS fixed
   2020-06 - show IP in menu 29-30
@@ -1293,6 +1294,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   TODO:
   -----
+  - change PTTmodeCW output for UHF band
   - stop playng RTTY memory
   - http check new firmware (github)
   - ssb ptt from elbug
@@ -1308,7 +1310,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20201013";
+const char* REV = "20211223";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1409,8 +1411,8 @@ unsigned int SEQUENCERlead       = 0;        // SEQUENCER output lead delay ms b
 unsigned int SEQUENCERtail       = 0;        // SEQUENCER output tail delay ms          :    :                      :     PA-->SEQ
 unsigned int PAlead              = 0;        // PA output lead delay ms between         :    PA-->TRX               :     :    :
 unsigned int PAtail              = 0;        // PA output tail delay ms                 :    :    :                 TRX-->PA   :
-unsigned int PTTlead             = 0;        // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
-unsigned int PTTtail             = 0;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
+unsigned int PTTlead             = 10;       // PTT (FSK) lead delay ms between         :    :    TRX-->FSK         :     :    :
+unsigned int PTTtail             = 6;        // PTT (FSK) tail delay ms                 :    :    :           FSK-->TRX   :    :
         /*                     |                                                        ^    ^    ^            ^    ^     ^
                             Master                                  SEQUENCERlead ______|    |    |            |    |     |_____ SEQUENCERtail
                             for CW                                         PAlead ___________|    |            |    |___________ PAtail
@@ -2283,18 +2285,20 @@ void setup()
 //-------------------------------------------------------------------------------------------------------
 
 void loop() {
-  EthernetCheck();
-  Mqtt();
-  BandDecoder();
-  DCinMeasure();
-  OpenInterfaceLCD();   // second line print
-  OpenInterfaceMENU();  // Menu button and HW preset
-  OpenInterfaceMODE();  // MODE in->out and features
-  IncomingUDP();        // Incomming UDP command and transmit characters
-  OpenInterfaceSequencer();
-  RemoteSwQuery();
+  if( PttActive==false ){
+    EthernetCheck();
+    Mqtt();
+    BandDecoder();
+    DCinMeasure();
+    OpenInterfaceLCD();   // second line print
+    OpenInterfaceMENU();  // Menu button and HW preset
+    OpenInterfaceMODE();  // MODE in->out and features
+    IncomingUDP();        // Incomming UDP command and transmit characters
+    RemoteSwQuery();
+    mqtt_wall();
+  }
   GPStimeWatchdog();
-  mqtt_wall();
+  OpenInterfaceSequencer();
 
   // check_ptt_low();
   // GPStime();
@@ -2885,6 +2889,10 @@ void readSDSettings(){
         CIV_ADRESS = hexToDecBy4bit(buf[0])<<4 | hexToDecBy4bit(buf[1]);
       }else if(settingName == "GpsTime"){
         GpsTime = (bool)settingValue.toInt();
+      }else if(settingName == "EthernetEnable"){
+        EnableEthernet = (bool)settingValue.toInt();
+      }else if(settingName == "mqttEnable"){
+        MQTT_ENABLE = (bool)settingValue.toInt();
       }else if(settingName == "mqttBroker0"){
         // byte ip0 = (int)settingValue.toInt();
         mqttBroker[0] = (int)settingValue.toInt();
