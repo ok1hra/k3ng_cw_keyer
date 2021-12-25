@@ -1261,6 +1261,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2021-12 - mqtt bugfix
   2020-11 - disable loop() function if PTT is active
   2020-10 - mqtt subscribe /ptt (SSB only)
           - GPS fixed
@@ -1310,7 +1311,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20211223";
+const char* REV = "20211225";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1345,6 +1346,7 @@ int MQTT_PORT           = 1883;       // MQTT broker PORT
 bool MQTT_LOGIN         = 0;          // enable MQTT broker login
 char MQTT_USER          = 'login';    // MQTT broker user login
 char MQTT_PASS          = 'passwd';   // MQTT broker password
+String HW_TOPIC         = "OI3";
 
 byte mqttBroker[4]={54,38,157,134}; // MQTT broker IP address
 // const byte mqttBroker[4]={192, 168, 1, 200}; // MQTT broker IP address
@@ -1398,7 +1400,7 @@ ToDo
 
 */
 
-String YOUR_CALL        = "OK1HRA";
+String YOUR_CALL        = "NONE";
 int MODE_AFTER_POWER_UP = 0;          // MODE after start up
 int MENU_AFTER_POWER_UP = 23;         // MENU after start up
 bool BUTTON_BEEP        = 1;          // Mode button beep enable
@@ -2921,6 +2923,8 @@ void readSDSettings(){
       }else if(settingName == "PTTmodeDIGI"){
         PTTmodeDIGI = (int)settingValue.toInt();
         PTTbyMode[5]=PTTmodeDIGI;
+      }else if(settingName == "DebuggingOutput"){
+        DebuggingOutput = (int)settingValue.toInt();
       }
 
       // byte ip0 = getPartOfStringBySeperatorAndAppearance(deviceIp, '.', 0).toInt();
@@ -3536,6 +3540,9 @@ void EthernetCheck(){
         lcd.print(F("IP address:"));
         lcd.setCursor(1, 1);
         lcd.print(Ethernet.localIP());
+        IPAddress IPlocalAddr = Ethernet.localIP();                           // get
+        String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
+        Debugging(IPlocalAddrString);
         delay(2500);
         lcd.clear();
 
@@ -3554,17 +3561,23 @@ void Mqtt(){
   if (MQTT_ENABLE == true && EthLinkStatus==1){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (!mqttClient.connected()) {
+      // Debugging("mqtt DISCONNECTED");
       long now = millis();
       if (now - lastMqttReconnectAttempt > 5000) {
+        Debugging("mqtt RECONECTING...");
         lastMqttReconnectAttempt = now;
         // Attempt to reconnect
         if (mqttReconnect()) {
+          Debugging("mqtt RECONECTED");
           lastMqttReconnectAttempt = 0;
+        }else{
+          Debugging("mqtt NOT-RECONECTED");
         }
       }
     } else {
       // Client connected
       mqttClient.loop();
+      // Debugging("mqtt CONECTED :)");
     }
     InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
@@ -3613,7 +3626,14 @@ if (MQTT_ENABLE == true && MQTT_LOGIN == true){
 */
 
 bool mqttReconnect() {
-  if (mqttClient.connect(mac)) {
+  char CharBuf[18];
+  String StrBuf;
+  StrBuf.reserve(18);
+  StrBuf = (String(YOUR_CALL)+"-"+HW_TOPIC+"-"+String(NET_ID));
+  StrBuf.toCharArray(CharBuf, 18);
+  Debugging("mqtt-id "+StrBuf);
+  if (mqttClient.connect(CharBuf)) {
+  // if (mqttClient.connect(mac)) {
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     IPAddress IPlocalAddr = Ethernet.localIP();                           // get
     String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
@@ -3634,13 +3654,13 @@ bool mqttReconnect() {
       lcd.setCursor(1, 0);
       lcd.print(F("subscribe"));
       lcd.setCursor(0, 1);
-      lcd.print(String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/");
+      lcd.print(String(YOUR_CALL)+"/"+HW_TOPIC+"/"+String(MASTER_NET_ID, HEX) + "/");
       delay(1000);
       lcd.setCursor(0, 1);
       lcd.print(F("             "));
 
       // CW
-      String topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
+      String topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
       topic.reserve(30);
       const char *cstr = topic.c_str();
       if(mqttClient.subscribe(cstr)==true){
@@ -3652,7 +3672,7 @@ bool mqttReconnect() {
       }
 
       // mode
-      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/mode";
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/mode";
       const char *cstr1 = topic.c_str();
       if(mqttClient.subscribe(cstr1)==true){
         // lcd.clear();
@@ -3666,7 +3686,7 @@ bool mqttReconnect() {
       }
 
       // Hz
-      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/hz";
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/hz";
       const char *cstr2 = topic.c_str();
       if(mqttClient.subscribe(cstr2)==true){
         // lcd.clear();
@@ -3680,7 +3700,7 @@ bool mqttReconnect() {
       }
 
       // wpm
-      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/wpm";
       const char *cstr3 = topic.c_str();
       if(mqttClient.subscribe(cstr3)==true){
         // lcd.clear();
@@ -3694,7 +3714,7 @@ bool mqttReconnect() {
       }
 
       // wpm
-      topic = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/ptt";
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/ptt";
       const char *cstr4 = topic.c_str();
       if(mqttClient.subscribe(cstr4)==true){
         // lcd.clear();
@@ -3708,7 +3728,7 @@ bool mqttReconnect() {
       }
 
       // set-debug
-      topic = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-debug";
       const char *cstr5 = topic.c_str();
       if(mqttClient.subscribe(cstr5)==true){
         // lcd.clear();
@@ -3730,7 +3750,7 @@ bool mqttReconnect() {
 //------------------------------------------------------------------------------------
 void MqttRx(char *topic, byte *payload, unsigned int length) {
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
-  String CheckTopicBase; // = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/";
+  String CheckTopicBase; // = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/";
   CheckTopicBase.reserve(30);
   byte* p = (byte*)malloc(length);
   memcpy(p,payload,length);
@@ -3743,7 +3763,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // Debugging(">"+String(p[0]));
 
   // CW/rtty    0
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/cw";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
   if ( CheckTopicBase.equals( String(topic) )){
     if(ActualMode==3 || ActualMode==4){               // if mode FSK
       FSKmemory[0] = p;
@@ -3763,7 +3783,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   }
 
   // mode   0
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/mode";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/mode";
   if ( CheckTopicBase.equals( String(topic) )){
       ActualMode=p[0]-48;
       SwitchHardware(ActualMode);
@@ -3777,7 +3797,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   }
 
   // Hz   0
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/hz";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/hz";
   if ( CheckTopicBase.equals( String(topic) )){
     freq = 0;
     unsigned long exp = 1;
@@ -3803,7 +3823,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   }
 
   // wpm   0
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/wpm";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/wpm";
   if ( CheckTopicBase.equals( String(topic) )){
     int wpm = 0;
     wpm = wpm + (p[0]-48)*10;
@@ -3812,14 +3832,14 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   }
 
   // Debug   net-id
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/set-debug";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-debug";
   if ( CheckTopicBase.equals( String(topic) )){
     DebuggingOutput=p[0]-48;
     Debugging("DebuggingOutput:"+p[0]);
   }
 
   // ptt   0=off 1-3=on
-  CheckTopicBase = String(YOUR_CALL) + "/OI3/" + String(MASTER_NET_ID, HEX) + "/ptt";
+  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/ptt";
   if ( CheckTopicBase.equals( String(topic) ) && ActualMode==2){  // PTTmodeCW, PTTmodeCW, PTTmodeSSB, PTTmodeFSK, PTTmodeFSK, PTTmodeDIGI
     if(p[0]==48){
       ptt_low(PTTbyMode[ActualMode],3);
@@ -3918,7 +3938,9 @@ void mqtt_wall(){
             // TOPIC
             webClient.print(F("              defaultTopic: \""));
             webClient.print(YOUR_CALL);
-            webClient.print(F("/OI3/"));
+            webClient.print("/");
+            webClient.print(HW_TOPIC);
+            webClient.print("/");
             webClient.print(String(NET_ID, HEX));
             webClient.println(F("/#\","));
             // END TOPIC
@@ -4574,7 +4596,7 @@ void MqttPubString(String TOPIC, String DATA, bool RETAIN){
   if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (mqttClient.connect(charbuf)) {
-      TOPIC = String(YOUR_CALL) + "/OI3/" + String(NET_ID, HEX) + "/" + TOPIC;
+      TOPIC = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/" + TOPIC;
       TOPIC.toCharArray( mqttPath, 50 );
       DATA.toCharArray( mqttTX, 150 );
       mqttClient.publish(mqttPath, mqttTX, RETAIN);
