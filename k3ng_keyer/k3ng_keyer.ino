@@ -1261,7 +1261,9 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2022-03 - unite UDP/keyer CW speed, MQTT fast re-init, disable mqtt steper over 40m band
   2021-12 - mqtt bugfix
+          - mqtt stepper support
   2020-11 - disable loop() function if PTT is active
   2020-10 - mqtt subscribe /ptt (SSB only)
           - GPS fixed
@@ -1311,7 +1313,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20211225";
+const char* REV = "20220306";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1347,6 +1349,7 @@ bool MQTT_LOGIN         = 0;          // enable MQTT broker login
 char MQTT_USER          = 'login';    // MQTT broker user login
 char MQTT_PASS          = 'passwd';   // MQTT broker password
 String HW_TOPIC         = "OI3";
+bool MQTT_STEP_ENABLE   = 0;          // enable MQTT stepper control https://remoteqth.com/w/doku.php?id=ci-v_mqtt_stepper
 
 byte mqttBroker[4]={54,38,157,134}; // MQTT broker IP address
 // const byte mqttBroker[4]={192, 168, 1, 200}; // MQTT broker IP address
@@ -1831,6 +1834,7 @@ bool LcdNeedRefresh=false;
 int ActualModePrev = MODE_AFTER_POWER_UP;
 int ActualMode = MODE_AFTER_POWER_UP;
 int ActualMenu = MENU_AFTER_POWER_UP;
+int ActualMenuTmp = MENU_AFTER_POWER_UP;
 int PreviousMenu = MENU_AFTER_POWER_UP;
 
 byte EncPrev=1;
@@ -1851,7 +1855,7 @@ const char* modeLCD[6][3] = {
     {"|DIG", "Data  AFSK", "DIG"},
 };
 
-const char* MenuTree[31] = {
+const char* MenuTree[32] = {
   "          ",      //  0 call
   // "PCB 3.1415",      //  1
   "rev",             //  1
@@ -1884,6 +1888,7 @@ const char* MenuTree[31] = {
   "PTTout",          // 28  PTT outputs by mode
   "IP ",             // 29  IP 1/2
   "   ",             // 30  IP 2/2
+  "",                // 31  MQTT stepper
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -1998,6 +2003,88 @@ unsigned long prevfreq=1;
                         */ { 0,  0,  0,  0,  1,  1,  1,  1,  0,  0,  0 }, /* --> BCD3
                         */ { 0,  0,  0,  0,  0,  0,  0,  0,  1,  1,  1 }, /* --> BCD4
     */};
+
+
+    // MQTT stepper
+    // MQTT_STEP_ENABLE
+    bool LinearInterpolation = false;
+    unsigned long freqThreshold=20000;
+    int HomeCfm[2] = {0, 0};
+
+    int sL[2] = {3, 3};
+    unsigned long freqMqttStepper[2];
+    unsigned long freqPrevMqttStepper[2];
+    bool TuneInProgress[2]={true,true};
+    long TuneInProgressTimer[2][2]={
+      {0,60000},
+      {0,120000},
+    };
+    byte smNET_ID[2] = {0x00, 0x01};       // mqtt STEPPER MOTOR slave device ID
+    // change with encoder and TX +- as /Target, or calculate from freq and TX number as /Target
+    // RX as /sTarget and show on LCD
+    volatile long SteppersCounter[2] = {0,0};
+    long SteppersCounterTarget[2] = {0,0};
+    long SteppersCounterTargetTmp[2] = {0,0};
+    float SteppersTemp[2];
+    unsigned long StorageFreqToStep[23][5] = {/*
+                      stepper    LC impedance
+          Freq Hz     0     1    H/L  0 = LC, 1 = CL
+    */   //{1800000,    30,  4300,   1},
+         // {2000000,    30,  3600,   1},
+//                   C-0    L-1   C0   L1
+         {1800000,   120,  3300,   0,   0},
+         {2000000,   120,  3300,   0,   0},
+
+         {3500000,   120,    20,   0,   0},
+         {3800000,   120,    20,   0,   0},
+         // {3500000,   120,   700,   1,   0},
+         // {3800000,   120,   700,   1,   0},
+
+         {7000000,   120,  1395,   0,   0},
+         {7200000,   120,  1395,   0,   0},
+
+    };
+    int NumberOfMemory = ( sizeof(StorageFreqToStep) / sizeof(StorageFreqToStep[0]) ); //array size
+    /*
+    MQTT monitor
+    ------------
+    mosquitto_sub -v -h 192.168.1.200 -t 'OK1HRA/sm/#'
+
+    MQTT topic
+    ------------
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sTarget -m '10'  // storage last stepper stop memory, do not use
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/Target -m '100'  // set new target 0-SteppersCounterLimit
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/Target -m '+'    // increment or decrement with "-"
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/Target -m 'H'    // homing to endstop and return to last target position
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/Target -m '?'    // return raw temperature
+
+    Retain message can be use for preset
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sReverse -m '1'
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sSteppersCounterLimit -m '1000'
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sCurrentRun -m '20'
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sL -m '1' -r     // L switch match to HIGH impedance | 0 = LC, 1 = CL
+
+    mosquitto_pub -h 192.168.1.200 -t OK1HRA/sm/0/sMicroSteps -m '16' // off, because low memory space
+
+    TIP:
+    ----
+    - s[Topic] can be retain message for preset value after start up
+    - sTarget use for storage last position and load after start up (using do not recommend)
+    - for reset step counter, send sTarget topic with message 0
+
+    80m
+    OK1HRA/sm/1/Target -m '650'
+    OK1HRA/sm/0/Target -m '120'
+    OK1HRA/sm/0/sL -m '1' -r
+
+    40m
+    OK1HRA/sm/0/sL -m '0' -r
+    OK1HRA/sm/1/Target -m '1395'
+    OK1HRA/sm/0/Target -m 'H'
+    OK1HRA/sm/0/Target -m '120'
+
+    */
+
 // #endif
 // #OI3 variables END
 
@@ -2152,7 +2239,7 @@ void setup()
   if(analogRead(SDPLUG)>128){    // microSD unplug
     lcd.print(F(" micro SD card  "));
     lcd.setCursor(0, 1);
-    delay(1000);
+    delay(100);
     lcd.print(F(" not present   "));
     delay(500);
   }else{
@@ -2194,7 +2281,7 @@ void setup()
         // myFile = SD.open("oi3.cfg", FILE_WRITE);
         // myFile.close();
       }
-      delay(2000);
+      delay(1000);
     }
 
     // myFile = SD.open("oi3.cfg", FILE_WRITE);
@@ -2298,6 +2385,7 @@ void loop() {
     IncomingUDP();        // Incomming UDP command and transmit characters
     RemoteSwQuery();
     mqtt_wall();
+    Watchdogs();
   }
   GPStimeWatchdog();
   OpenInterfaceSequencer();
@@ -2313,6 +2401,34 @@ void loop() {
 // SUBROUTINES ---------------------------------------------------------------------------------------------------------
 // http://www.catonmat.net/blog/low-level-bit-hacks-you-absolutely-must-know/
 
+void Watchdogs(){
+  // MQTT LC stepper
+  if(MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1){
+    for (int j = 0; j < 2; j++) {
+      if(TuneInProgress[j]==true && millis()-TuneInProgressTimer[j][0]>TuneInProgressTimer[j][1]){
+        MqttPubString(String(YOUR_CALL) + "/sm/" + String(j, HEX) + "/" + "Target", "H", false, false);
+        TuneInProgress[j]=true;
+        TuneInProgressTimer[j][0]=millis();
+      }
+    }
+
+    if( TuneInProgress[0]==false && TuneInProgress[1]==false && HomeCfm[0]==0 && HomeCfm[1]==0){
+      for (int j = 0; j < 2; j++) {
+        MqttPubString(String(YOUR_CALL) + "/sm/" + String(j, HEX) + "/" + "Target", "H", false, false);
+        TuneInProgress[j]=true;
+        HomeCfm[j]=1;
+        TuneInProgressTimer[j][0]=millis();
+        if(j==0){
+          ActualMenuTmp=ActualMenu;
+          ActualMenu=31;
+          LcdNeedRefresh=true;
+        }
+      }
+    }
+  }
+
+}
+//-------------------------------------------------------------------------------------------------------
 void IdBySmtPad(){
   if(NET_ID==0xff){
     NET_ID = 0;
@@ -2438,7 +2554,7 @@ void GPStimeWatchdog(){
       GpsPpsStatus=true;
     }
     if(GpsPpsStatus!=GpsPpsStatusPrev){
-      MqttPubString("gps_qrv", String(GpsPpsStatus), false);
+      MqttPubString("gps_qrv", String(GpsPpsStatus), false, true);
       GpsPpsStatusPrev=GpsPpsStatus;
     }
   }
@@ -2647,8 +2763,8 @@ void AccKeyboardShift(){    // run from interrupt
     }
 
     // MQTT send
-    MqttPubString("KeybBank0", String(rxShiftInButton[0]), false);
-    MqttPubString("KeybBank1", String(rxShiftInButton[1]), false);
+    MqttPubString("KeybBank0", String(rxShiftInButton[0]), false, true);
+    MqttPubString("KeybBank1", String(rxShiftInButton[1]), false, true);
     // MqttPub("KeybBank2", 0, rxShiftInButton[2]);   // bank2 disable
 
     // SHIFT OUT
@@ -2775,6 +2891,10 @@ void MenuEncoder(){
             }
           break;
           }
+          case 31:{ // MQTT_STEP_ENABLE
+            if(digitalRead(encA)==LOW){MQTT_STEP_ENABLE=!MQTT_STEP_ENABLE;};
+          break;
+          }
         }
         EncPrev=0;
       }
@@ -2827,7 +2947,7 @@ void EncoderInterrupt(){
     }
 
     // MQTT send
-    MqttPubString("IpSWEncoder", String(IpSwitchEncoder), false);
+    MqttPubString("IpSWEncoder", String(IpSwitchEncoder), false, true);
     LcdNeedRefresh=true;
   }
 }
@@ -2895,6 +3015,8 @@ void readSDSettings(){
         EnableEthernet = (bool)settingValue.toInt();
       }else if(settingName == "mqttEnable"){
         MQTT_ENABLE = (bool)settingValue.toInt();
+      }else if(settingName == "mqttStepperEnable"){
+        MQTT_STEP_ENABLE = (bool)settingValue.toInt();
       }else if(settingName == "mqttBroker0"){
         // byte ip0 = (int)settingValue.toInt();
         mqttBroker[0] = (int)settingValue.toInt();
@@ -3034,6 +3156,7 @@ void readSDSettings(){
     Serial2.begin(SERBAUD2);
     ActualMode = MODE_AFTER_POWER_UP;     //  Mode
     ActualMenu = MENU_AFTER_POWER_UP;     //  Menu
+    ActualMenuTmp = MENU_AFTER_POWER_UP;     //  Menu
     PreviousMenu = MENU_AFTER_POWER_UP;     //  previous Menu
     YOUR_CALL.toCharArray(MenuTree[0], 10);
              // 0 reserve for incoming UDP string
@@ -3069,7 +3192,7 @@ void readSDSettings(){
   }*/
 //-------------------------------------------------------------------------------------------------------
 void AfterMQTTconnect(){
-  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1 && EthLinkStatus==1){
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1){
   //    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {          // public IP addres to MQTT
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
@@ -3118,7 +3241,7 @@ void OpenInterfaceInterlock(){      // activate from interrupt
     if (digitalRead(INTERLOCK) == ptt_interlock_active && InterlockFromUdpActive == LOW) {   // if change and not active from UDP
       ptt_interlock_active = ptt_interlock_active ^ 1;        // ivert
       if(ptt_interlock_active == 1  && SequencerLevel != 0){
-        MqttPubString("ptt", "0", false);
+        MqttPubString("ptt", "0", false, true);
         digitalWrite (SEQUENCER, LOW);  // SEQUENCER
         digitalWrite (PTTPA, LOW);      // PTT-PA
         digitalWrite (PTTpin[1], LOW);
@@ -3168,7 +3291,7 @@ void ptt_high_old(int PTToutput){
   if(ptt_interlock_active == 0){
     if(SequencerLevel == 0){
       digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
-      MqttPubString("sequencer", "1", false);
+      MqttPubString("sequencer", "1", false, true);
       if(DebuggingOutput!=0){
         DebuggingTimer=millis();
       }
@@ -3181,7 +3304,7 @@ void ptt_high_old(int PTToutput){
     if(SequencerLevel == 5){
       digitalWrite (PTTPA, HIGH);      // PTT-PA
       SendBroadcastUdpPTT(1);
-      MqttPubString("ptt_pa", "1", false);
+      MqttPubString("ptt_pa", "1", false, true);
       Debugging("PTTpa-H "+String(millis()-DebuggingTimer));
       if(PttInStatus==false){
         delay(PAlead);
@@ -3192,21 +3315,21 @@ void ptt_high_old(int PTToutput){
       switch (PTToutput) {
         case 1:{ // PTT-1
           digitalWrite (PTT1, HIGH);
-          MqttPubString("ptt1", "1", false);
+          MqttPubString("ptt1", "1", false, true);
           Debugging("PTT1-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 1;
         break;
         }
         case 2:{ // PTT-2
           digitalWrite (PTT2, HIGH);
-          MqttPubString("ptt2", "1", false);
+          MqttPubString("ptt2", "1", false, true);
           Debugging("PTT2-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 2;
         break;
         }
         case 3:{ // PTT-3
           digitalWrite (PTT3, HIGH);
-          MqttPubString("ptt3", "1", false);
+          MqttPubString("ptt3", "1", false, true);
           Debugging("PTT3-H "+String(millis()-DebuggingTimer));
           SequencerLevel = 3;
         break;
@@ -3291,7 +3414,7 @@ void OpenInterfaceSequencer(){
 
     case 0:{
       // if( PttActive==true && millis()-LastSeqChange>SEQUENCERlead ){
-      if( PttActive==true ){
+      if(PttActive==true){
         Debugging("seq0");
         digitalWrite (SEQUENCER, HIGH);  // SEQUENCER
         LastSeqChange=millis();
@@ -3301,7 +3424,7 @@ void OpenInterfaceSequencer(){
         }
         Debugging("PTTseq-H "+String(millis()-DebuggingTimer));
         SequencerLevel=5;
-        // MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false, true);
       }
       break;
     }
@@ -3314,14 +3437,14 @@ void OpenInterfaceSequencer(){
         delay(PAlead);
         Debugging("PTTpa-H "+String(millis()-DebuggingTimer));
         SequencerLevel=4;
-        // MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false, true);
       }
       if( PttActive==false && millis()-LastSeqChange>SEQUENCERtail ){
         digitalWrite (SEQUENCER, LOW);      // SEQUENCER
         LastSeqChange=millis();
         Debugging("PTTseq-L "+String(millis()-DebuggingTimer));
         SequencerLevel=0;
-        // MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false, true);
       }
       break;
     }
@@ -3329,20 +3452,20 @@ void OpenInterfaceSequencer(){
     case 4:{ // PTT-123
       // if( PttActive==true && millis()-LastSeqChange>PTTlead ){
       if( PttActive==true ){
-        MqttPubString("ptt", String(PTTout), false);
+        MqttPubString("ptt", String(PTTout), false, true);
         digitalWrite (PTTpin[PTTout], HIGH);      // PTT-123
         LastSeqChange=millis();
         delay(PTTlead);
         Debugging("PTT"+String(PTTout)+"-H "+String(millis()-DebuggingTimer));
         SequencerLevel=PTTout;
-        // MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false, true);
       }
       if( PttActive==false && millis()-LastSeqChange>PAtail ){
         digitalWrite (PTTPA, LOW);      // PTT-PA
         LastSeqChange=millis();
         Debugging("PTTpa-L "+String(millis()-DebuggingTimer));
         SequencerLevel=5;
-        // MqttPubString("sequencer", String(SequencerLevel), false);
+        // MqttPubString("sequencer", String(SequencerLevel), false, true);
       }
       break;
     }
@@ -3352,19 +3475,19 @@ void OpenInterfaceSequencer(){
     case 3:{ // PTT-123
       if( PttActive==false && millis()-LastSeqChange>PTTtail ){
         if(PTTout>1){
-          MqttPubString("ptt", "0", false);
+          MqttPubString("ptt", "0", false, true);
           digitalWrite (PTTpin[PTTout], LOW);      // PTT-23
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
           SequencerLevel=4;
-          // MqttPubString("sequencer", String(SequencerLevel), false);
+          // MqttPubString("sequencer", String(SequencerLevel), false, true);
         }else if(PTTout==1 && send_buffer_bytes==0 && being_sent==0 ){
-          MqttPubString("ptt", "0", false);
+          MqttPubString("ptt", "0", false, true);
           digitalWrite (PTTpin[PTTout], LOW);      // PTT-1
           LastSeqChange=millis();
           Debugging("PTT"+String(PTTout)+"-L "+String(millis()-DebuggingTimer));
           SequencerLevel=4;
-          // MqttPubString("sequencer", String(SequencerLevel), false);
+          // MqttPubString("sequencer", String(SequencerLevel), false, true);
         }
       }
       break;
@@ -3384,7 +3507,7 @@ void check_ptt_low(){
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
           if(PttInStatus!=true ){
-            // MqttPubString("ptt1", "0", false);
+            // MqttPubString("ptt1", "0", false, true);
             Debugging("PTT1-L "+String(millis()-DebuggingTimer));
           }
         }
@@ -3395,7 +3518,7 @@ void check_ptt_low(){
             digitalWrite (PTT2, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
-          // MqttPubString("ptt2", "0", false);
+          // MqttPubString("ptt2", "0", false, true);
           Debugging("PTT2-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3405,7 +3528,7 @@ void check_ptt_low(){
             digitalWrite (PTT3, LOW);
           SequencerLevel = 4;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
-          // MqttPubString("ptt3", "0", false);
+          // MqttPubString("ptt3", "0", false, true);
           Debugging("PT3-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3415,7 +3538,7 @@ void check_ptt_low(){
           digitalWrite (PTTPA, LOW);
           SequencerLevel = 5;
           PTT_tail_timeout[4][0] = millis(); // set time mark PA
-          // MqttPubString("ptt_pa", "0", false);
+          // MqttPubString("ptt_pa", "0", false, true);
           Debugging("PTTpa-L "+String(millis()-DebuggingTimer));
       }
       break;
@@ -3426,7 +3549,7 @@ void check_ptt_low(){
           SequencerLevel = 0;
           PTT_tail_timeout[3][0] = millis(); // set time mark PA
           SendBroadcastUdpPTT(0);
-          // MqttPubString("sequencer", "0", false);
+          // MqttPubString("sequencer", "0", false, true);
           Debugging("PTTseq-L "+String(millis()-DebuggingTimer));
         }
       break;
@@ -3534,7 +3657,7 @@ void EthernetCheck(){
         Ethernet.begin(mac, ip, myDns, gateway, subnet);
       }
 
-        delay(2000);
+        delay(1000);
         lcd.clear();
         lcd.setCursor(1, 0);
         lcd.print(F("IP address:"));
@@ -3543,7 +3666,7 @@ void EthernetCheck(){
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
         Debugging(IPlocalAddrString);
-        delay(2500);
+        delay(1500);
         lcd.clear();
 
       UdpCommand.begin(UdpCommandPort);   // UDP
@@ -3638,15 +3761,17 @@ bool mqttReconnect() {
     IPAddress IPlocalAddr = Ethernet.localIP();                           // get
     String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
     IPlocalAddrString.reserve(15);
-    MqttPubString("IP", IPlocalAddrString, true);
-    MqttPubString("REV", REV, true);
+    MqttPubString("IP", IPlocalAddrString, true, true);
+    MqttPubString("REV", REV, true, true);
     lcd.clear();
     lcd.setCursor(1, 0);
     lcd.print(F("MQTT connected"));
     lcd.setCursor(1, 1);
     lcd.print(MqttServer);
-    delay(2500);
+    delay(100);
     lcd.clear();
+    String topic;
+    topic.reserve(30);
 
     // resubscribe
     if(NET_ID!=MASTER_NET_ID){
@@ -3655,19 +3780,18 @@ bool mqttReconnect() {
       lcd.print(F("subscribe"));
       lcd.setCursor(0, 1);
       lcd.print(String(YOUR_CALL)+"/"+HW_TOPIC+"/"+String(MASTER_NET_ID, HEX) + "/");
-      delay(1000);
+      delay(100);
       lcd.setCursor(0, 1);
       lcd.print(F("             "));
 
       // CW
-      String topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
-      topic.reserve(30);
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
       const char *cstr = topic.c_str();
       if(mqttClient.subscribe(cstr)==true){
         lcd.setCursor(0, 1);
         lcd.print(F("/cw "));
         Debugging("MQTT subscribe to "+String(cstr));
-        delay(1000);
+        delay(100);
         // lcd.clear();
       }
 
@@ -3681,7 +3805,7 @@ bool mqttReconnect() {
         lcd.setCursor(0, 1);
         lcd.print(F("/mode "));
         Debugging("MQTT subscribe to "+String(cstr1));
-        delay(1000);
+        delay(100);
         // lcd.clear();
       }
 
@@ -3695,7 +3819,7 @@ bool mqttReconnect() {
         lcd.setCursor(0, 1);
         lcd.print(F("/hz  "));
         Debugging("MQTT subscribe to "+String(cstr2));
-        delay(1000);
+        delay(100);
         // lcd.clear();
       }
 
@@ -3709,7 +3833,7 @@ bool mqttReconnect() {
         lcd.setCursor(0, 1);
         lcd.print(F("/wpm "));
         Debugging("MQTT subscribe to "+String(cstr3));
-        delay(1000);
+        delay(100);
         // lcd.clear();
       }
 
@@ -3723,7 +3847,7 @@ bool mqttReconnect() {
         lcd.setCursor(0, 1);
         lcd.print(F("/ptt "));
         Debugging("MQTT subscribe to "+String(cstr4));
-        delay(1000);
+        delay(100);
         // lcd.clear();
       }
 
@@ -3737,7 +3861,96 @@ bool mqttReconnect() {
         lcd.setCursor(0, 1);
         lcd.print(F("/set-debug"));
         Debugging("MQTT subscribe to "+String(cstr5));
-        delay(1000);
+        delay(100);
+      }
+      lcd.clear();
+
+    }
+
+    // MQTT LC stepper
+    if(MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1){
+
+      // sTarget 0
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[0], HEX) + "/sTarget";
+      const char *cstr6 = topic.c_str();
+      if(mqttClient.subscribe(cstr6)==true){
+        lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("0/sTarget "));
+        Debugging("MQTT subscribe to "+String(cstr6));
+        delay(100);
+      }
+      // lcd.clear();
+
+      // sTarget 1
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[1], HEX) + "/sTarget";
+      const char *cstr7 = topic.c_str();
+      if(mqttClient.subscribe(cstr7)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("1/sTarget "));
+        Debugging("MQTT subscribe to "+String(cstr7));
+        delay(100);
+      }
+      // lcd.clear();
+
+      // TempRAW 0
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[0], HEX) + "/TempRAW";
+      const char *cstr8 = topic.c_str();
+      if(mqttClient.subscribe(cstr8)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("0/TempRAW "));
+        Debugging("MQTT subscribe to "+String(cstr8));
+        delay(100);
+      }
+      // lcd.clear();
+
+      // TempRAW 1
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[1], HEX) + "/TempRAW";
+      const char *cstr9 = topic.c_str();
+      if(mqttClient.subscribe(cstr9)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("1/TempRAW "));
+        Debugging("MQTT subscribe to "+String(cstr9));
+        delay(100);
+      }
+      // lcd.clear();
+
+      // sL 0
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[0], HEX) + "/sL";
+      const char *cstr10 = topic.c_str();
+      if(mqttClient.subscribe(cstr10)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("0/sL      "));
+        Debugging("MQTT subscribe to "+String(cstr10));
+        delay(100);
+      }
+      // lcd.clear();
+
+      // sL 1
+      topic = String(YOUR_CALL) + "/sm/" + String(smNET_ID[1], HEX) + "/sL";
+      const char *cstr11 = topic.c_str();
+      if(mqttClient.subscribe(cstr11)==true){
+        // lcd.clear();
+        // lcd.setCursor(1, 0);
+        // lcd.print(F("subscribe"));
+        lcd.setCursor(0, 1);
+        lcd.print(F("1/sL "));
+        Debugging("MQTT subscribe to "+String(cstr11));
+        delay(100);
       }
       lcd.clear();
 
@@ -3762,92 +3975,154 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   // Debugging(">"+StringTMP);
   // Debugging(">"+String(p[0]));
 
-  // CW/rtty    0
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
-  if ( CheckTopicBase.equals( String(topic) )){
-    if(ActualMode==3 || ActualMode==4){               // if mode FSK
-      FSKmemory[0] = p;
-      FSKmemoryTX(0);
+  if(NET_ID!=MASTER_NET_ID){
+
+    // CW/rtty    0
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
+    if ( CheckTopicBase.equals( String(topic) )){
+      if(ActualMode==3 || ActualMode==4){               // if mode FSK
+        FSKmemory[0] = p;
+        FSKmemoryTX(0);
+      }
+      if(ActualMode==0 || ActualMode==1){               // if mode CW
+        ptt_high(PTTbyMode[ActualMode]);
+        // Debugging("Local CW transmit (rx buffer size "+String(length)+")");
+        for (int i = 0; i < length; i++) {
+          if(p[i]!=0){
+            send_char(toUpperCase(p[i]),KEYER_NORMAL);
+            // Debugging(String(i)+"-"+p[i]);
+          }
+        }
+        ptt_low(PTTbyMode[ActualMode],4);
+      }
     }
-    if(ActualMode==0 || ActualMode==1){               // if mode CW
-      ptt_high(PTTbyMode[ActualMode]);
-      // Debugging("Local CW transmit (rx buffer size "+String(length)+")");
-      for (int i = 0; i < length; i++) {
-        if(p[i]!=0){
-          send_char(toUpperCase(p[i]),KEYER_NORMAL);
-          // Debugging(String(i)+"-"+p[i]);
+
+    // mode   0
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/mode";
+    if ( CheckTopicBase.equals( String(topic) )){
+        ActualMode=p[0]-48;
+        SwitchHardware(ActualMode);
+        MqttPubString("mode", String(ActualMode), false, true);
+        Debugging("Mode:"+String(ActualMode));
+      // KENWOOD
+      if(BAND_DECODER_IN==2){
+         Serial2.print("MD" + String(KenwoodCatModeSetReverse[ActualMode]) + ";");    // set mode
+         Serial2.flush();
+      }
+    }
+
+    // Hz   0
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/hz";
+    if ( CheckTopicBase.equals( String(topic) )){
+      freq = 0;
+      unsigned long exp = 1;
+      for (int i = length-1; i >=0 ; i--) {
+        freq = freq + (p[i]-48)*exp;
+        exp = exp*10;
+      }
+      // KENWOOD
+      if(BAND_DECODER_IN==2){
+          String freqPCtx = String(freq);        // to string
+          freqPCtx.reserve(12);
+          while (freqPCtx.length() < 11) {       // leding zeros
+              freqPCtx = 0 + freqPCtx;
+          }
+         Serial2.print("FA" + freqPCtx + ";");    // sets both VFO
+         Serial2.print("FB" + freqPCtx + ";");
+      //          Serial2.print("FA" + freqPCtx + ";");    // first packet not read every time
+         Serial2.flush();
+         // freqPrev2 = freq;
+      }
+      FreqToBandRules(freq);
+      bandSET();                                              // set outputs relay
+    }
+
+    // wpm   0
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/wpm";
+    if ( CheckTopicBase.equals( String(topic) )){
+      int wpm = 0;
+      wpm = wpm + (p[0]-48)*10;
+      wpm = wpm + (p[1]-48)*1;
+      speed_set(wpm);
+    }
+
+    // Debug   net-id
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-debug";
+    if ( CheckTopicBase.equals( String(topic) )){
+      DebuggingOutput=p[0]-48;
+      Debugging("DebuggingOutput:"+p[0]);
+    }
+
+    // ptt   0=off 1-3=on
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/ptt";
+    if ( CheckTopicBase.equals( String(topic) ) && ActualMode==2){  // PTTmodeCW, PTTmodeCW, PTTmodeSSB, PTTmodeFSK, PTTmodeFSK, PTTmodeDIGI
+      if(p[0]==48){
+        ptt_low(PTTbyMode[ActualMode],3);
+      }else{
+        ptt_high(PTTbyMode[ActualMode]);
+      }
+    }
+  }
+
+  // MQTT steppers
+  // int SteppersTempRaw;
+  if(MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1){
+    for (int j=0; j<2; j++) {
+
+      // SteppersCounterTarget
+      CheckTopicBase = String(YOUR_CALL) + "/sm/" + String(smNET_ID[j], HEX) + "/sTarget";
+      if ( CheckTopicBase.equals( String(topic) ) ){
+        SteppersCounter[j] = 0;
+        unsigned long exp = 1;
+        for (int i = length-1; i >=0 ; i--) {
+          // Numbers only
+          if(p[i]>=48 && p[i]<=58){
+            SteppersCounter[j] = SteppersCounter[j] + (p[i]-48)*exp;
+            exp = exp*10;
+          }
+        }
+        SteppersCounterTarget[j]=SteppersCounter[j];
+        if(HomeCfm[j]==1){
+          HomeCfm[j]=2;
+        }
+        TuneInProgress[j]=false;
+        Debugging("MqttRx sTarget "+String(SteppersCounterTarget[j])+"|"+String(TuneInProgress[0])+"|"+String(TuneInProgress[1])+"|"+String(HomeCfm[0])+"|"+String(HomeCfm[1]) );
+        if(TuneInProgress[0]==false && TuneInProgress[1]==false){
+          ActualMenu=ActualMenuTmp;
+          LcdNeedRefresh=true;
+        }
+        // MqttPubString(String(YOUR_CALL) + "/OI3/" + String(j, HEX) + "/" + "TXinhibit", String(TuneInProgress[j]), false, false);
+      }
+
+      // // TEMP
+      // CheckTopicBase = String(YOUR_CALL) + "/sm/" + String(smNET_ID[j], HEX) + "/TempRAW";
+      // if ( CheckTopicBase.equals( String(topic) ) ){
+      //   int SteppersTempRaw = 0;
+      //   unsigned long exp = 1;
+      //   for (int i = length-1; i >=0 ; i--) {
+      //     // Numbers only
+      //     if(p[i]>=48 && p[i]<=58){
+      //       SteppersTempRaw = SteppersTempRaw + (p[i]-48)*exp;
+      //       exp = exp*10;
+      //     }
+      //   }
+      //   SteppersTemp[j] = getTemp(SteppersTempRaw);
+      // }
+
+      // sL storage L match switch to H or L impedance
+      CheckTopicBase = String(YOUR_CALL) + "/sm/" + String(smNET_ID[j], HEX) + "/sL";
+      if ( CheckTopicBase.equals( String(topic) ) ){
+        if(p[0] == 48){
+          sL[j]=0;
+        }else{
+          sL[j]=1;
         }
       }
-      ptt_low(PTTbyMode[ActualMode],4);
+
     }
   }
 
-  // mode   0
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/mode";
-  if ( CheckTopicBase.equals( String(topic) )){
-      ActualMode=p[0]-48;
-      SwitchHardware(ActualMode);
-      MqttPubString("mode", String(ActualMode), false);
-      Debugging("Mode:"+String(ActualMode));
-    // KENWOOD
-    if(BAND_DECODER_IN==2){
-       Serial2.print("MD" + String(KenwoodCatModeSetReverse[ActualMode]) + ";");    // set mode
-       Serial2.flush();
-    }
-  }
-
-  // Hz   0
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/hz";
-  if ( CheckTopicBase.equals( String(topic) )){
-    freq = 0;
-    unsigned long exp = 1;
-    for (int i = length-1; i >=0 ; i--) {
-      freq = freq + (p[i]-48)*exp;
-      exp = exp*10;
-    }
-    // KENWOOD
-    if(BAND_DECODER_IN==2){
-        String freqPCtx = String(freq);        // to string
-        freqPCtx.reserve(12);
-        while (freqPCtx.length() < 11) {       // leding zeros
-            freqPCtx = 0 + freqPCtx;
-        }
-       Serial2.print("FA" + freqPCtx + ";");    // sets both VFO
-       Serial2.print("FB" + freqPCtx + ";");
-    //          Serial2.print("FA" + freqPCtx + ";");    // first packet not read every time
-       Serial2.flush();
-       // freqPrev2 = freq;
-    }
-    FreqToBandRules(freq);
-    bandSET();                                              // set outputs relay
-  }
-
-  // wpm   0
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/wpm";
-  if ( CheckTopicBase.equals( String(topic) )){
-    int wpm = 0;
-    wpm = wpm + (p[0]-48)*10;
-    wpm = wpm + (p[1]-48)*1;
-    speed_set(wpm);
-  }
-
-  // Debug   net-id
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-debug";
-  if ( CheckTopicBase.equals( String(topic) )){
-    DebuggingOutput=p[0]-48;
-    Debugging("DebuggingOutput:"+p[0]);
-  }
-
-  // ptt   0=off 1-3=on
-  CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/ptt";
-  if ( CheckTopicBase.equals( String(topic) ) && ActualMode==2){  // PTTmodeCW, PTTmodeCW, PTTmodeSSB, PTTmodeFSK, PTTmodeFSK, PTTmodeDIGI
-    if(p[0]==48){
-      ptt_low(PTTbyMode[ActualMode],3);
-    }else{
-      ptt_high(PTTbyMode[ActualMode]);
-    }
-  }
-
+  LcdNeedRefresh=true;
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 } // MqttRx END
 
@@ -4063,6 +4338,63 @@ void mqtt_wall(){
   }
 }
 //-------------------------------------------------------------------------------------------------------
+// MQTT_STEP_ENABLE
+void TuneMqttStepper(int CHANEL){
+  bool run=false;
+  if(LinearInterpolation==true){
+    if(freqPrevMqttStepper[CHANEL]!=freqMqttStepper[CHANEL] ){
+      run=true;
+    }
+  }else{
+    if(freqPrevMqttStepper[CHANEL]>freqMqttStepper[CHANEL]){
+      if( (freqPrevMqttStepper[CHANEL]-freqMqttStepper[CHANEL]) > freqThreshold ){
+        run=true;
+      }
+    }else{
+      if( (freqMqttStepper[CHANEL]-freqPrevMqttStepper[CHANEL]) > freqThreshold ){
+        run=true;
+      }
+    }
+  }
+
+  if(run==true){
+    for (int j=0; j<2; j++) {
+      // if(SteppersCounterTarget[j]==SteppersCounter[j]){   // if previous tune ends
+      for (int i = 0; i < NumberOfMemory; i++) {
+          if(StorageFreqToStep[i][0] <= freqMqttStepper[CHANEL] && freqMqttStepper[CHANEL] <= StorageFreqToStep[i+1][0]){   // find range
+              SteppersCounterTargetTmp[j] = map(freqMqttStepper[CHANEL], StorageFreqToStep[i][0], StorageFreqToStep[i+1][0], StorageFreqToStep[i][j+1], StorageFreqToStep[i+1][j+1]);  // map(value, fromLow, fromHigh, toLow, toHigh) //*10 one decimal
+              // SerialNeedStatus=true;
+              if(TuneInProgress[j]==false && SteppersCounterTargetTmp[j]!=SteppersCounterTarget[j] && HomeCfm[j]==2){
+                Debugging("Target old "+String(SteppersCounterTarget[j])+" | new "+String(SteppersCounterTargetTmp[j]) );
+                SteppersCounterTarget[j]=SteppersCounterTargetTmp[j];
+                String tmpStr = String(SteppersCounterTarget[j]);
+                if(StorageFreqToStep[i][3+j] != sL[0+j]){
+                  sL[0+j]=StorageFreqToStep[i][3+j];
+                  MqttPubString(String(YOUR_CALL) + "/sm/" + String(j, HEX) + "/" + "sL", String(sL[0+j]), true, false);
+                };
+                if(SteppersCounterTarget[j]>=0){
+                  MqttPubString(String(YOUR_CALL) + "/sm/" + String(j, HEX) + "/" + "Target", tmpStr, false, false);
+                  TuneInProgress[j]=true;
+                  //  PTT
+                  // MqttPubString(String(YOUR_CALL) + "/OI3/" + String(j, HEX) + "/" + "TXinhibit", String(TuneInProgress[j]), false, false);
+                  TuneInProgressTimer[j][0]=millis();
+                  if(j==0){
+                    ActualMenuTmp=ActualMenu;
+                    ActualMenu=31;
+                    LcdNeedRefresh=true;
+                  }
+                }
+              }
+              break;
+
+          }
+      }
+    } // end for j
+    freqPrevMqttStepper[CHANEL]=freqMqttStepper[CHANEL];
+  } // end run
+}
+
+//-------------------------------------------------------------------------------------------------------
 // Incoming UDP commands
 void IncomingUDP(){
   if(EnableEthernet==1 && EthLinkStatus==1){
@@ -4269,7 +4601,7 @@ void IncomingUDP(){
           ptt_interlock_active = B00000;
           InterlockFromUdpActive = LOW;
         }
-        MqttPubString("interlock", String(ptt_interlock_active), false);
+        MqttPubString("interlock", String(ptt_interlock_active), false, true);
         LcdNeedRefresh=true;
       }
 
@@ -4287,7 +4619,7 @@ void IncomingUDP(){
             ptt_interlock_active = B00000;
             InterlockFromUdpActive = LOW;
           }
-          MqttPubString("interlock", String(ptt_interlock_active), false);
+          MqttPubString("interlock", String(ptt_interlock_active), false, true);
           LcdNeedRefresh=true;
         }
       }
@@ -4322,11 +4654,11 @@ void IncomingUDP(){
         else{tmp = PTTPA;}
         if(packetBuffer[2] == '0'){
             digitalWrite (tmp, LOW);
-            MqttPubString("ptt"+String((int)packetBuffer[4]), "0", false);
+            MqttPubString("ptt"+String((int)packetBuffer[4]), "0", false, true);
         }else if(packetBuffer[2] == '1'){
           if(ptt_interlock_active == 0){  // if interlock not active
             digitalWrite (tmp, HIGH);
-            MqttPubString("ptt"+String((int)packetBuffer[4]), "1", false);
+            MqttPubString("ptt"+String((int)packetBuffer[4]), "1", false, true);
           }
         }
       }
@@ -4339,7 +4671,7 @@ void IncomingUDP(){
           ActualMode = tmp;
           if(ActualMode!=ActualModePrev){
             ActualModePrev=ActualMode;
-            MqttPubString("mode", String(ActualMode), false);
+            MqttPubString("mode", String(ActualMode), false, true);
             SwitchHardware(ActualMode);
           }
         }
@@ -4352,7 +4684,7 @@ void IncomingUDP(){
         // 000-NetID [hex] MUST BE UNIQUE IN NETWORK - every Open Interface own different number
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '0' && packetBuffer[8] == ';'){
           NET_ID = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
-          MqttPubString("net-id", String(NET_ID), false);
+          MqttPubString("net-id", String(NET_ID), false, true);
         }
 
         // 001-SERBAUD2 - 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200,
@@ -4385,13 +4717,13 @@ void IncomingUDP(){
             break;
           }
           Serial2.begin(SERBAUD2);
-          MqttPubString("serbaud2", String(SERBAUD2), false);
+          MqttPubString("serbaud2", String(SERBAUD2), false, true);
         } // end SERBAUD2
 
         // 002-CIV_ADRESS
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '2' && packetBuffer[8] == ';'){
           CIV_ADRESS = (hexToDecBy4bit(packetBuffer[6]) << 4) | hexToDecBy4bit(packetBuffer[7]);   // 4-bit left shift to combine them
-          MqttPubString("ci-v", String(CIV_ADRESS), false);
+          MqttPubString("ci-v", String(CIV_ADRESS), false, true);
         }
 
         //  003-BAND_DECODER_IN  0=disable 1=ICOM_CIV 2=KENWOOD_PC 3=YAESU_CAT 4=YAESU_CAT_OLD 5=INPUT_SERIAL
@@ -4400,13 +4732,13 @@ void IncomingUDP(){
           if(tmp < 6){
             BAND_DECODER_IN = hexToDecBy4bit(packetBuffer[6]);
           }
-          MqttPubString("band-decoder-trx", String(BAND_DECODER_IN), false);
+          MqttPubString("band-decoder-trx", String(BAND_DECODER_IN), false, true);
         }
 
         //  004-debugging
         if (packetBuffer[2] == '0' && packetBuffer[3] == '0' && packetBuffer[4] == '4' && packetBuffer[7] == ';'){
           DebuggingOutput = packetBuffer[6]-'0';
-          MqttPubString("DebuggingOutput", String(DebuggingOutput), false);
+          MqttPubString("DebuggingOutput", String(DebuggingOutput), false, true);
           Debugging("Debug switch from IP to: "+String(DebuggingOutput));
         }
 
@@ -4510,7 +4842,7 @@ void Debugging(String StringForDebug){
     }
     // MQTT
     if(DebuggingOutput==4){
-      MqttPubString("debug", StringForDebug, false);
+      MqttPubString("debug", StringForDebug, false, true);
     }
   }
 }
@@ -4586,7 +4918,7 @@ void MqttPubString_old(String path, String character){
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 }
 //-----------------------------------------------------------------------------------
-void MqttPubString(String TOPIC, String DATA, bool RETAIN){
+void MqttPubString(String TOPIC, String DATA, bool RETAIN, bool DEFAULTPATH){
   TOPIC.reserve(50);
   DATA.reserve(150);
   char charbuf[50];
@@ -4596,7 +4928,9 @@ void MqttPubString(String TOPIC, String DATA, bool RETAIN){
   if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (mqttClient.connect(charbuf)) {
-      TOPIC = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/" + TOPIC;
+      if(DEFAULTPATH==true){
+        TOPIC = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/" + TOPIC;
+      }
       TOPIC.toCharArray( mqttPath, 50 );
       DATA.toCharArray( mqttTX, 150 );
       mqttClient.publish(mqttPath, mqttTX, RETAIN);
@@ -4622,7 +4956,7 @@ void DCinMeasure(){
     }
     Timeout[7][0] = millis();                      // set time mark
     if(abs(DCinVoltage-PrevDCinVoltage)>0.5){
-      MqttPubString("dc_in", String(DCinVoltage), false);
+      MqttPubString("dc_in", String(DCinVoltage), false, true);
       PrevDCinVoltage=DCinVoltage;
     }
   }
@@ -4670,6 +5004,10 @@ void OpenInterfaceLCD(){    // LCD
 
         case 2:
           lcd.print(F(" <+-"));
+        break;
+
+        case 3:
+          lcd.print(F(" <##"));
         break;
       }
 
@@ -5082,6 +5420,50 @@ void MenuToLCD(int nr){
       CulumnPosition=CulumnPosition+String(Ethernet.localIP()[2]+".."+Ethernet.localIP()[3]).length()+1;
     break;
     }
+    case 31:{ // MQTT stepper
+      lcd.setCursor(CulumnPosition-1, 1);
+      if(MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1){
+        lcd.print("C");
+        if(TuneInProgress[0]==true){
+          if(HomeCfm[0]<2){
+            lcd.print("...");
+          }else{
+            lcd.print(" >>");
+          }
+        }else{
+          Space(3, String(SteppersCounter[0]).length(), ' ');
+          lcd.print(SteppersCounter[0]);
+        }
+        // sL
+        if(TuneInProgress[1]==true){
+          lcd.print(" ");
+        }else{
+          if(sL[1] == 1){
+            lcd.print("v");
+          }else if(sL[1] == 0){
+            lcd.print("^");
+          }else{
+            lcd.print("^");
+          }
+        }
+        lcd.print("L");
+        if(TuneInProgress[1]==true){
+          if(HomeCfm[1]<2){
+            lcd.print("...");
+          }else{
+            lcd.print(" >>");
+          }
+        }else{
+          lcd.print(SteppersCounter[1]);
+          Space(5, String(SteppersCounter[1]).length(), ' ');
+        }
+        CulumnPosition=10;
+      }else{
+        lcd.print(F("Stepper OFF"));
+        CulumnPosition=CulumnPosition+String("Stepper OFF").length();
+      }
+    break;
+    }
 
   }
   if(ModeMenuStatus == 0){        // Mode
@@ -5094,6 +5476,15 @@ void MenuToLCD(int nr){
     CulumnPosition++;
   }
 } // END MenuToLCD
+//------------------------------------------------------------------------
+void Space(int MAX, int LENGHT, char CHARACTER){
+  int NumberOfSpace = MAX-LENGHT;
+  if(NumberOfSpace>0){
+    for (int i=0; i<NumberOfSpace; i++){
+      lcd.print(CHARACTER);
+    }
+  }
+}
 //-------------------------------------------------------------------------------------------------------
 String PrintByte(byte ByteToPrint){
   String LCDstring = "";
@@ -5137,7 +5528,7 @@ void OpenInterfaceMENU(){
             if(ModeMenuStatus == 0){                       // if MENU disable, MODE active
               if (ptt_interlock_active == 1 && InterlockFromUdpActive == HIGH) {   // if UDP Interlock ON
                 ptt_interlock_active = B00000;                            // manual UDP interlock OFF
-                  MqttPubString("interlock", String(ptt_interlock_active), false);
+                  MqttPubString("interlock", String(ptt_interlock_active), false, true);
                   LcdNeedRefresh=true;
               }else{
                 // if(BAND_DECODER_IN==2 && ActualMode==2){ // kenwood && ssb > switch between fsk/dig
@@ -5149,7 +5540,7 @@ void OpenInterfaceMENU(){
                   }
                   if(ActualMode!=ActualModePrev){
                     ActualModePrev=ActualMode;
-                    MqttPubString("mode", String(ActualMode), false);
+                    MqttPubString("mode", String(ActualMode), false, true);
                     SwitchHardware(ActualMode);
                   }
                 // }
@@ -5260,14 +5651,14 @@ void OpenInterfaceMODE(){
         ptt_high(PTTbyMode[ActualMode]);
         if(FootSwChange != 1){          // if change
           FootSwChange = 1;
-            // MqttPubString("footsw", "1", false);
+            // MqttPubString("footsw", "1", false, true);
         }
       }else{
         if(FootSwChange != 0){
           // ptt_low(PTTmodeSSB,9);
           ptt_low(PTTbyMode[ActualMode],9);
           FootSwChange = 0;
-            // MqttPubString("footsw", "0", false);
+            // MqttPubString("footsw", "0", false, true);
         }
       }
       MenuEncoder();
@@ -5581,7 +5972,7 @@ void sendFsk(){
 
 void chTable()
 {
-          MqttPubString("rtty", String(ch), false);
+          MqttPubString("rtty", String(ch), false, true);
         fig2 = -1;
         if(ch == ' ')
         {
@@ -5754,7 +6145,7 @@ void fskDecoder(){
                               positionCounter=0;
                           }
                           lcd.print(chIn);
-                            MqttPubString("rtty", String(chIn), false);
+                            MqttPubString("rtty", String(chIn), false, true);
                 }
                 dsp = 0;
         }
@@ -5878,7 +6269,7 @@ void BandDecoder() {
                   ActualMode=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table
                   if(ActualMode!=ActualModePrev){
                     ActualModePrev=ActualMode;
-                    MqttPubString("mode", String(ActualMode), false);
+                    MqttPubString("mode", String(ActualMode), false, true);
                     SwitchHardware(ActualMode);
                   }
                 }
@@ -5960,7 +6351,7 @@ void BandDecoder() {
                       ActualMode=KenwoodCatModeSet[String(rdK[29]).toInt()];        // get mode
                       if(ActualMode!=ActualModePrev){
                         ActualModePrev=ActualMode;
-                        MqttPubString("mode", String(ActualMode), false);
+                        MqttPubString("mode", String(ActualMode), false, true);
                         SwitchHardware(ActualMode);
                       }
                     }
@@ -6156,9 +6547,13 @@ void bandSET() {
     if (EnableEthernet==1 && (freq!=prevfreq) && EthLinkStatus==1){
       // float freqPub = freq;
       // freqPub = freqPub/1000;
-      // MqttPubString("khz", String(freqPub), false);
-      MqttPubString("hz", String(freq), false);
-      MqttPubString("band", String(BAND), false);
+      // MqttPubString("khz", String(freqPub), false, true);
+      MqttPubString("hz", String(freq), false, true);
+      MqttPubString("band", String(BAND), false, true);
+      if(PttActive==false && MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1 && freq < 7200000){
+        freqMqttStepper[0]=freq;
+        TuneMqttStepper(0);
+      }
       prevfreq=freq;
     }
 }
@@ -9497,7 +9892,7 @@ void send_dit(){
   unsigned int character_wpm = configuration.wpm;
   #ifdef FEATURE_FARNSWORTH
     if ((sending_mode == AUTOMATIC_SENDING) && (configuration.wpm_farnsworth > configuration.wpm)) {
-      character_wpm = configuration.wpm_farnsworth;
+      // character_wpm = configuration.wpm_farnsworth;                                //  disable #OI3 - unite UDP/KEYER speed
     }
   #endif //FEATURE_FARNSWORTH
 
@@ -9586,7 +9981,7 @@ void send_dah(){
 
   #ifdef FEATURE_FARNSWORTH
     if ((sending_mode == AUTOMATIC_SENDING) && (configuration.wpm_farnsworth > configuration.wpm)) {
-      character_wpm = configuration.wpm_farnsworth;
+      // character_wpm = configuration.wpm_farnsworth;                                //  disable #OI3 - unite UDP/KEYER speed
     }
   #endif //FEATURE_FARNSWORTH
 
@@ -10180,7 +10575,7 @@ void speed_set(int wpm_set){
   configuration.wpm = wpm_set;
   config_dirty = 1;
 
-  MqttPubString("wpm", String(configuration.wpm), false); // add for #OI3
+  MqttPubString("wpm", String(configuration.wpm), false, true); // add for #OI3
 
   #ifdef FEATURE_DYNAMIC_DAH_TO_DIT_RATIO
     if ((configuration.wpm >= DYNAMIC_DAH_TO_DIT_RATIO_LOWER_LIMIT_WPM) && (configuration.wpm <= DYNAMIC_DAH_TO_DIT_RATIO_UPPER_LIMIT_WPM)){
@@ -14646,7 +15041,6 @@ void process_serial_command(PRIMARY_SERIAL_CLS * port_to_use) {
 #ifdef FEATURE_PADDLE_ECHO
 void service_paddle_echo()
 {
-// MqttPubString(String TOPIC, String DATA, bool RETAIN)
   #ifdef DEBUG_LOOP
     debug_serial_port->println(F("loop: entering service_paddle_echo"));
   #endif
@@ -14866,7 +15260,7 @@ void service_paddle_echo()
       #else  // ! OPTION_PROSIGN_SUPPORT
         if (cli_paddle_echo){
           primary_serial_port->write(byte(convert_cw_number_to_ascii(paddle_echo_buffer)));
-          MqttPubString("cw", String(char(convert_cw_number_to_ascii(paddle_echo_buffer))), false);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
+          MqttPubString("cw", String(char(convert_cw_number_to_ascii(paddle_echo_buffer))), false, true);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
           #ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
             secondary_serial_port->write(byte(convert_cw_number_to_ascii(paddle_echo_buffer)));
           #endif
@@ -14900,7 +15294,7 @@ void service_paddle_echo()
     #if defined(FEATURE_SERIAL) && defined(FEATURE_COMMAND_LINE_INTERFACE)
        if (cli_paddle_echo){
          primary_serial_port->write(" ");
-         MqttPubString("cw", " ", false);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
+         MqttPubString("cw", " ", false, true);      // add #OI3 - need enable FEATURE_COMMAND_LINE_INTERFACE + FEATURE_PADDLE_ECHO
 
         #ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
           secondary_serial_port->write(" ");
@@ -19052,12 +19446,12 @@ void service_ptt_interlock(){
         lcd_center_print_timed("PTT Interlock",0,2000);
         #endif //FEATURE_DISPLAY
       }
-        MqttPubString("interlock", String(ptt_interlock_active), false);    // add for #OI3
+        MqttPubString("interlock", String(ptt_interlock_active), false, true);    // add for #OI3
     } else {
       if (ptt_interlock_active){
         ptt_interlock_active = 0;
       }
-        MqttPubString("interlock", String(ptt_interlock_active), false);    // add for #OI3
+        MqttPubString("interlock", String(ptt_interlock_active), false, true);    // add for #OI3
     }
     last_ptt_interlock_check = millis();
   }
