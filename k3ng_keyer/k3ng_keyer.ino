@@ -1313,7 +1313,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20220306";
+const char* REV = "20220909";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1897,7 +1897,7 @@ bool ModeLastButtonState = true;
 bool ModeDebouncedSignal = true;
 int ModeMenuStatus = 0;  // 0-MODE | 1-MENU | 2-SET
 byte Ptt232Active = LOW;
-byte FootSwChange = LOW;
+byte FootSwChange = 0;
 byte InterlockFromUdpActive = LOW;
 //byte ptt_interlock_active = 0;  // define in K3NG code
 
@@ -2381,12 +2381,12 @@ void loop() {
     DCinMeasure();
     OpenInterfaceLCD();   // second line print
     OpenInterfaceMENU();  // Menu button and HW preset
-    OpenInterfaceMODE();  // MODE in->out and features
     IncomingUDP();        // Incomming UDP command and transmit characters
     RemoteSwQuery();
     mqtt_wall();
     Watchdogs();
   }
+  OpenInterfaceMODE();  // MODE in->out and features
   GPStimeWatchdog();
   OpenInterfaceSequencer();
 
@@ -5621,6 +5621,7 @@ void SwitchHardware(int SwitchHardwareMode){
 //-------------------------------------------------------------------------------------------------------
 void OpenInterfaceMODE(){
   // MODE
+  // Debugging("ActualMode "+String(ActualMode));
   switch (ActualMode) { // MODE
     case 0:{ // CW Keyer + WinKey
       if (K3NG_KEYER == true){
@@ -5649,16 +5650,16 @@ void OpenInterfaceMODE(){
       if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
         // ptt_high(PTTmodeSSB);
         ptt_high(PTTbyMode[ActualMode]);
-        if(FootSwChange != 1){          // if change
+        if(FootSwChange == 0){          // if change
           FootSwChange = 1;
-            // MqttPubString("footsw", "1", false, true);
+          Debugging("FootSW-L "+String(FootSwChange));
         }
       }else{
-        if(FootSwChange != 0){
+        if(FootSwChange == 1){
           // ptt_low(PTTmodeSSB,9);
           ptt_low(PTTbyMode[ActualMode],9);
           FootSwChange = 0;
-            // MqttPubString("footsw", "0", false, true);
+          Debugging("FootSW-H "+String(FootSwChange));
         }
       }
       MenuEncoder();
