@@ -5594,7 +5594,7 @@ void SwitchHardware(int SwitchHardwareMode){
         break;
     }
     case 2:{ // SSB
-        digitalWrite (WINKEY, HIGH);  // disable DTR/RTS
+        digitalWrite (WINKEY, LOW);  // enable DTR/RTS for DVK
         digitalWrite (AFSK, LOW);
         break;
     }
