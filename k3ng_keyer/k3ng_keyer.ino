@@ -1313,7 +1313,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20220909";
+const char* REV = "20220910";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -5647,7 +5647,7 @@ void OpenInterfaceMODE(){
     break;
     }
     case 2:{ // SSB
-      if(digitalRead(FootSW)==LOW || digitalRead(PTT232)==HIGH){   // FootSW / 232(usb audio-ssb pc memory) PTT
+      if(digitalRead(FootSW)==LOW){   // FootSW / 232(usb audio-ssb pc memory) PTT
         // ptt_high(PTTmodeSSB);
         ptt_high(PTTbyMode[ActualMode]);
         if(FootSwChange == 0){          // if change
@@ -5661,6 +5661,17 @@ void OpenInterfaceMODE(){
           FootSwChange = 0;
           Debugging("FootSW-H "+String(FootSwChange));
         }
+      }
+      if(digitalRead(PTT232)==HIGH){    // PTT-232 (audio DVK)
+        // ptt_high(PTTmodeDIGI);
+        ptt_high(PTTbyMode[ActualMode]);
+        if(Ptt232Active == LOW){
+          Ptt232Active = HIGH;
+        }
+      }else if(digitalRead(PTT232)==LOW && Ptt232Active == HIGH){       // only if activate from PTT232
+        Ptt232Active = LOW;
+        // ptt_low(PTTmodeDIGI,11);
+        ptt_low(PTTbyMode[ActualMode],11);
       }
       MenuEncoder();
     break;
