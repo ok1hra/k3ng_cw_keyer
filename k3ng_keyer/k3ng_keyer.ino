@@ -1552,6 +1552,25 @@ const int KenwoodCatModeSetReverse[6] {
 /* FSK        */  6,
 /* DIG(AFSK)  */  1
 };
+const int YaesuModeSet[10] {
+/* YAESU mode ->  Open Interface mode
+                  0|CWK     -WinKey
+                  1>CWD     -cw/dtr, ptt/rts
+                  2|SSB     -foot_switch/ptt, audio to mic
+                  3>FSK PC  -fsk/dtr, ptt/rts
+                  4|FSK     -serial 9600 baud
+                  5|DIG     -AFSK, ptt/rts, audio to rear */
+/* LSB      */    2,
+/* USB      */    2,
+/* CW       */    1,
+/* CW-R     */    1,
+/* AM       */    2,
+/* FM       */    2,
+/* CW(N)    */    1,
+/* CW(N)-R  */    1,
+/* AM(N)    */    2,
+/* FM(N)    */    2
+};
 
 // BAND DECODER antenna NAME ON LCD MENU
 char* ANTname[12] = {
@@ -6461,6 +6480,12 @@ void BandDecoder() {
                 #endif
                 if (BAND_DECODER_WATCHDOG > 0){
                     Timeout[3][0] = millis();                      // set time mark
+                }
+                ActualMode=YaesuModeSet[rdYO[5]];        // set mode by YaesuModeSet table
+                if(ActualMode!=ActualModePrev){
+                  ActualModePrev=ActualMode;
+                  MqttPubString("mode", String(ActualMode), false, true);
+                  SwitchHardware(ActualMode);
                 }
             }
             memset(rdYO, 0, sizeof(rdYO));   // Clear contents of Buffer
