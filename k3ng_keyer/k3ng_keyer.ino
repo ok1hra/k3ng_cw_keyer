@@ -6481,7 +6481,7 @@ void BandDecoder() {
                 if (BAND_DECODER_WATCHDOG > 0){
                     Timeout[3][0] = millis();                      // set time mark
                 }
-                ActualMode=YaesuModeSet[rdYO[5]];        // set mode by YaesuModeSet table
+                ActualMode=YaesuModeSet[rdYO[4]];        // set mode by YaesuModeSet table
                 if(ActualMode!=ActualModePrev){
                   ActualModePrev=ActualMode;
                   MqttPubString("mode", String(ActualMode), false, true);
