@@ -1313,7 +1313,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20220910";
+const char* REV = "20221016";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -6635,6 +6635,9 @@ void watchDog() {
 
 // ICOM STATE MACHINE!
 int icomSM(byte b){      // state machine
+  // fefe560e03fd fefe0e56038079022800fd fefe560e04fd fefe0e56040301fd    request
+  // fefe0056009079022800fd fefe0056000080022800fd    CIV-TX-ON
+
     rdI[10] = 0;
     // This filter solves read from 0x00 0x05 0x03 commands and 00 E0 F1 address used by software
     switch (stateMachine) {

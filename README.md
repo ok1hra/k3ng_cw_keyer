@@ -10,3 +10,9 @@ Arduino firmware modified for Open Interface III hardware - based on **K3NG Ardu
 More in [wiki](https://remoteqth.com/wiki/index.php?page=Open+interface+III)
 
 ![LCD menu](https://remoteqth.com/img/wiki-open-interface-3-04.png)
+
+## Binary upload with avrdude
+```bash
+$ avrdude -v -v -p atmega2560 -c wiring -P /dev/ttyUSB0 -b115200 -V -D -U flash:w:/k3ng_keyer.ino.mega.hex:i
+```
+
