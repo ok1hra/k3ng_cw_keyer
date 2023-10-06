@@ -1261,6 +1261,7 @@ unsigned long automatic_sending_interruption_time = 0;
 
   Changelog:
   ----------
+  2023-09 - add http web CAT
   2022-03 - unite UDP/keyer CW speed, MQTT fast re-init, disable mqtt steper over 40m band
   2021-12 - mqtt bugfix
           - mqtt stepper support
@@ -1313,7 +1314,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20221016";
+const char* REV = "20231006";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1516,7 +1517,7 @@ const int CIVModeSet[13] {
                   4|FSK     -serial 9600 baud
                   5|DIG     -AFSK, ptt/rts, audio to rear */
 /* LSB        */	2,
-/* USB        */	5,
+/* USB        */	2,
 /* AM         */	2,
 /* CW         */	0,
 /* RTTY (FSK) */	4,
@@ -1560,8 +1561,8 @@ const int YaesuModeSet[10] {
                   3>FSK PC  -fsk/dtr, ptt/rts
                   4|FSK     -serial 9600 baud
                   5|DIG     -AFSK, ptt/rts, audio to rear */
-/* LSB      */    2,
-/* USB      */    2,
+/* LSB      */    5,
+/* USB      */    5,
 /* CW       */    1,
 /* CW-R     */    1,
 /* AM       */    2,
@@ -1639,6 +1640,7 @@ char* ANTname[12] = {
 // http
 #include <EthernetServer.h>
 EthernetServer webServer(80);           // Web server PORT
+EthernetServer webCat(81);           // Web server PORT
 // String HTTP_req;
 char linebuf[80];
 int charcount=0;
@@ -2403,6 +2405,7 @@ void loop() {
     IncomingUDP();        // Incomming UDP command and transmit characters
     RemoteSwQuery();
     mqtt_wall();
+    http_cat();
     Watchdogs();
   }
   OpenInterfaceMODE();  // MODE in->out and features
@@ -3691,6 +3694,7 @@ void EthernetCheck(){
       UdpCommand.begin(UdpCommandPort);   // UDP
       UdpRtty.begin(UdpRttyPort);
       webServer.begin();                     // Web
+      webCat.begin();                     // Web
       // TelnetServer.begin();
       // TxUDP(ThisDevice, RemoteDevice, 'b', 'r', 'o');
     } // end ETH-ON
@@ -4301,6 +4305,9 @@ void mqtt_wall(){
                 webClient.print(F("MQTT"));
               break;
             }
+            webClient.print(F(" | <a href=\"http://"));
+            webClient.print(Ethernet.localIP());
+            webClient.println(F(":81\" target=\"_blank\">httpCAT</a>"));
             // END STATUS
             webClient.println(F("              </span></p>"));
             webClient.println(F("              </div>"));
@@ -4352,6 +4359,86 @@ void mqtt_wall(){
       // close the connection:
       webClient.stop();
       Debugging("WIFI client disconnected");
+    }
+    InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
+  }
+}
+//------------------------------------------------------------------------------------
+void http_cat(){
+  if(EnableEthernet==1 && EthLinkStatus==1){
+    InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
+    // listen for incoming clients
+    EthernetClient webCatClient = webCat.available();  // try to get webCatClient
+    if (webCatClient) {
+
+      Debugging("WebCat new client");
+      memset(linebuf,0,sizeof(linebuf));
+      charcount=0;
+      // an http request ends with a blank line
+      boolean currentLineIsBlank = true;
+      while (webCatClient.connected()) {
+        if (webCatClient.available()) {
+          char c = webCatClient.read();
+          // Debugging(c);
+          //read char by char HTTP request
+          linebuf[charcount]=c;
+          if (charcount<sizeof(linebuf)-1) charcount++;
+          // if you've gotten to the end of the line (received a newline
+          // character) and the line is blank, the http request has ended,
+          // so you can send a reply
+          if (c == '\n' && currentLineIsBlank) {
+            // send a standard http response header
+            webCatClient.println(F("HTTP/1.1 200 OK"));
+            webCatClient.println(F("Content-Type: text/html"));
+            webCatClient.println(F("Connection: close"));  // the connection will be closed after completion of the response
+            webCatClient.println();
+
+            String WebMode;
+            switch (ActualMode) {
+              case 0:
+                WebMode = "CW";
+              break;
+              case 1:
+                WebMode = "CW";
+              break;
+              case 2:
+                WebMode = "SSB";
+              break;
+              case 3:
+                WebMode = "RTTY";
+              break;
+              case 4:
+                WebMode = "RTTY";
+              break;
+              case 5:
+                WebMode = "SSB";
+              break;
+            }
+            webCatClient.print(String(freq)+"|"+String(WebMode)+"|");
+            break;
+          }
+          if (c == '\n') {
+            // you're starting a new line
+            currentLineIsBlank = true;
+            // if (strstr(linebuf,"GET /h0 ") > 0){digitalWrite(GPIOS[0], HIGH);}else if (strstr(linebuf,"GET /l0 ") > 0){digitalWrite(GPIOS[0], LOW);}
+            // else if (strstr(linebuf,"GET /h1 ") > 0){digitalWrite(GPIOS[1], HIGH);}else if (strstr(linebuf,"GET /l1 ") > 0){digitalWrite(GPIOS[1], LOW);}
+
+            // you're starting a new line
+            currentLineIsBlank = true;
+            memset(linebuf,0,sizeof(linebuf));
+            charcount=0;
+          } else if (c != '\r') {
+            // you've gotten a character on the current line
+            currentLineIsBlank = false;
+          }
+        }
+      }
+      // give the web browser time to receive the data
+      delay(1);
+
+      // close the connection:
+      webCatClient.stop();
+      Debugging("WebCat client disconnected");
     }
     InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
