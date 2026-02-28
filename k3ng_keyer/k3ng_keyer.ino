@@ -1519,7 +1519,7 @@ const int CIVModeSet[13] {
 /* LSB        */	2,
 /* USB        */	2,
 /* AM         */	2,
-/* CW         */	0,
+/* CW         */	1,  //0
 /* RTTY (FSK) */	4,
 /* FM 	      */  2,
 /* Wide FM    */	2,
@@ -1539,10 +1539,10 @@ const int KenwoodCatModeSet[10] {
 /* CW         */	0,
 /* FM 	      */  2,
 /* AM         */	2,
-/* RTTY (FSK) */	4,
+/* RTTY (FSK) */	3,  // 3 FSK PC | 4 FSK CLI | 5 DIGITAL (AFSK)
 /* CW-R       */	0,
 /* Tune       */	0,
-/* RTTY-R     */  4
+/* RTTY-R     */  3
 };
 const int KenwoodCatModeSetReverse[6] {
 /* OI3 mode > 0 No mode | 1 LSB | 2 USB | 3 CW | 4 FM | 5 AM | 6 RTTY(FSK) | 7 CW-R | 8 Tune | 9 RTTY-R */
@@ -2053,8 +2053,8 @@ unsigned long prevfreq=1;
     */   //{1800000,    30,  4300,   1},
          // {2000000,    30,  3600,   1},
 //                   C-0    L-1   C0   L1
-         {1800000,   120,  3300,   0,   0},
-         {2000000,   120,  3300,   0,   0},
+         {1800000,   120,  3360,   0,   0},
+         {2000000,   120,  3360,   0,   0},
 
          {3500000,   120,    20,   0,   0},
          {3800000,   120,    20,   0,   0},
