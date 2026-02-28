@@ -1347,8 +1347,8 @@ bool MQTT_ENABLE        = 1;          // enable public to MQTT broker
                                       // [mosquitto_pub -h BROKER-IP -d -t any/path -m "MESSAGE"]
 int MQTT_PORT           = 1883;       // MQTT broker PORT
 bool MQTT_LOGIN         = 0;          // enable MQTT broker login
-char MQTT_USER          = 'login';    // MQTT broker user login
-char MQTT_PASS          = 'passwd';   // MQTT broker password
+const char MQTT_USER[]  = "login";    // MQTT broker user login   // FIX bod7: opraveno z char='login' na const char[] - multi-char literal ukladal jen posledni byte
+const char MQTT_PASS[]  = "passwd";   // MQTT broker password      // FIX bod7: opraveno z char='passwd' na const char[]
 String HW_TOPIC         = "OI3";
 bool MQTT_STEP_ENABLE   = 0;          // enable MQTT stepper control https://remoteqth.com/w/doku.php?id=ci-v_mqtt_stepper
 
@@ -3663,6 +3663,8 @@ void EthernetCheck(){
       if(EnableDHCP==1){
           lcd.print(F("ON]..."));
           Ethernet.begin(mac);
+          Ethernet.setRetransmissionTimeout(500);   // FIX bod4: zkraceni TCP timeoutu z ~4000ms na 500ms - zabrani blokovani pri nedostupnem MQTT brokeru
+          Ethernet.setRetransmissionCount(2);    // FIX bod4: 2 pokusy misto 8 - max blokace ~1s misto ~30s
           IPAddress CheckIP = Ethernet.localIP();
           if( CheckIP[0]==0 && CheckIP[1]==0 && CheckIP[2]==0 && CheckIP[3]==0 ){
             lcd.clear();
@@ -3677,6 +3679,8 @@ void EthernetCheck(){
       }else{
         lcd.print(F("OFF]"));
         Ethernet.begin(mac, ip, myDns, gateway, subnet);
+        Ethernet.setRetransmissionTimeout(500);   // FIX bod4: zkraceni TCP timeoutu z ~4000ms na 500ms
+        Ethernet.setRetransmissionCount(2);    // FIX bod4: 2 pokusy misto 8
       }
 
         delay(1000);
@@ -3704,6 +3708,9 @@ void EthernetCheck(){
 
 //-------------------------------------------------------------------------------------------------------
 void Mqtt(){
+  #ifdef OPTION_WATCHDOG_TIMER
+    wdt_reset();  // FIX bod3: wdt_reset() v Mqtt() - TCP reconnect muze trvat dele nez watchdog timeout
+  #endif
   if (MQTT_ENABLE == true && EthLinkStatus==1){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     if (!mqttClient.connected()) {
@@ -4365,6 +4372,9 @@ void mqtt_wall(){
 }
 //------------------------------------------------------------------------------------
 void http_cat(){
+  #ifdef OPTION_WATCHDOG_TIMER
+    wdt_reset();  // FIX bod3: wdt_reset() v http_cat() - while(client.connected()) muze blokovat dele nez watchdog timeout
+  #endif
   if(EnableEthernet==1 && EthLinkStatus==1){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     // listen for incoming clients
@@ -4376,7 +4386,12 @@ void http_cat(){
       charcount=0;
       // an http request ends with a blank line
       boolean currentLineIsBlank = true;
+      unsigned long httpCatTimeout = millis();  // FIX bod2: timeout aby while() neblokoval navzdy pri spatnem klientovi
       while (webCatClient.connected()) {
+        if (millis() - httpCatTimeout > 2000) {  // FIX bod2: max 2s na celou HTTP komunikaci
+          Debugging(F("http_cat: timeout"));
+          break;
+        }
         if (webCatClient.available()) {
           char c = webCatClient.read();
           // Debugging(c);
