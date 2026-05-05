@@ -1314,7 +1314,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20231006";
+const char* REV = "20260505";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -1449,7 +1449,7 @@ D31 - PA-PTT >  7-DB25 PA   12-DB15
 // BAND DECODER Outputs [NOT IMPLEMENTED]
 // int SERBAUD3           = 115200;// [baud] CAT Serial port in/out baudrate
 // #define BCD_OUT                 // output 11-14 relay used as Yaesu BCD
-// #define ICOM_CIV_OUT          // send frequency to CIV ** you must set TRX CIV_ADRESS, and disable ICOM_CIV **
+#define ICOM_CIV_OUT            // send frequency to CIV on Serial3 using CIV_ADRESS from oi0.cfg
 // #define KENWOOD_PC_OUT        // send frequency to RS232 CAT ** for operation must disable REQUEST **
 // #define YAESU_CAT_OUT         // send frequency to RS232 CAT ** for operation must disable REQUEST **
 // #define REMOTE_RELAY          // TCP/IP remote relay - need install and configure TCP232 module
@@ -1613,6 +1613,8 @@ char* ANTname[12] = {
   EthernetClient ethClient;
   PubSubClient mqttClient(ethClient);
   long lastMqttReconnectAttempt = 0;
+  unsigned long lastMqttServiceTick = 0;
+  const unsigned long MQTT_SERVICE_TICK_INTERVAL = 25;
 
   //  PubSubClient mqttClient(server, 1883, callback, ethClient);
   // bool MqttConnected = false;
@@ -1621,8 +1623,10 @@ char* ANTname[12] = {
   #define UDP_TX_PACKET_MAX_SIZE 40       // MIN 30
   char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; //buffer to hold incoming packet,
   int UDPpacketSize;
-  char mqttTX[150];
-  char mqttPath[20];
+  const size_t MQTT_TX_BUFFER_SIZE = 150;
+  const size_t MQTT_PATH_BUFFER_SIZE = 80;
+  char mqttTX[MQTT_TX_BUFFER_SIZE];
+  char mqttPath[MQTT_PATH_BUFFER_SIZE];
   EthernetUDP UdpCommand; // An EthernetUDP instance to let us send and receive packets over UDP
   EthernetUDP UdpRtty;
   IPAddress BroadcastIP(0, 0, 0, 0);        // Broadcast IP address
@@ -2372,10 +2376,16 @@ void setup()
 
   }
 
+  #if defined(ICOM_CIV_OUT) || defined(KENWOOD_PC_OUT) || defined(YAESU_CAT_OUT) || defined(YAESU_CAT_OUT_OLD)
+    Serial3.begin(SERBAUD3);
+  #endif
+
   // GpsTime [FGPMMOPA6H chip]
   if (GpsTime==1){
     pinMode(ACC16, INPUT);
-    Serial3.begin(SERBAUD3);
+    #if !defined(ICOM_CIV_OUT) && !defined(KENWOOD_PC_OUT) && !defined(YAESU_CAT_OUT) && !defined(YAESU_CAT_OUT_OLD)
+      Serial3.begin(SERBAUD3);
+    #endif
     // Serial3.setTimeout(10);
     delay(100);
     // Switch to $GPGGA only
@@ -3219,40 +3229,40 @@ void AfterMQTTconnect(){
         IPAddress IPlocalAddr = Ethernet.localIP();                           // get
         String IPlocalAddrString = String(IPlocalAddr[0]) + "." + String(IPlocalAddr[1]) + "." + String(IPlocalAddr[2]) + "." + String(IPlocalAddr[3]);   // to string
         IPlocalAddrString.reserve(15);
-        IPlocalAddrString.toCharArray( mqttTX, 50 );                          // to array
+        IPlocalAddrString.toCharArray(mqttTX, sizeof(mqttTX));                          // to array
         String path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ip";
-        path2.reserve(20);
-        path2.toCharArray( mqttPath, 20 );
+        path2.reserve(MQTT_PATH_BUFFER_SIZE);
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/pttlead";
-        path2.toCharArray( mqttPath, 20 );
-        String(PTTlead).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(PTTlead).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/ptttail";
-        path2.toCharArray( mqttPath, 20 );
-        String(PTTtail).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(PTTtail).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqlead";
-        path2.toCharArray( mqttPath, 20 );
-        String(SEQUENCERlead).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(SEQUENCERlead).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/seqtail";
-        path2.toCharArray( mqttPath, 20 );
-        String(SEQUENCERtail).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(SEQUENCERtail).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/palead";
-        path2.toCharArray( mqttPath, 20 );
-        String(PAlead).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(PAlead).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
 
         path2 = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/patail";
-        path2.toCharArray( mqttPath, 20 );
-        String(PAtail).toCharArray( mqttTX, 50 );                          // to array
+        path2.toCharArray(mqttPath, sizeof(mqttPath));
+        String(PAtail).toCharArray(mqttTX, sizeof(mqttTX));                          // to array
           mqttClient.publish(mqttPath, mqttTX, true);
   }
 }
@@ -3737,6 +3747,17 @@ void Mqtt(){
 }
 
 //-------------------------------------------------------------------------------------------------------
+void MqttServiceTick(){
+  if (MQTT_ENABLE == true && EthLinkStatus == 1 && mqttClient.connected() == true && being_sent == SENDING_NOTHING){
+    unsigned long now = millis();
+    if ((now - lastMqttServiceTick) >= MQTT_SERVICE_TICK_INTERVAL) {
+      lastMqttServiceTick = now;
+      mqttClient.loop();
+    }
+  }
+}
+
+//-------------------------------------------------------------------------------------------------------
 /*
 if (MQTT_ENABLE == true && MQTT_LOGIN == true){
   if (mqttClient.connect(mac, MQTT_USER, MQTT_PASS)){
@@ -3779,13 +3800,19 @@ if (MQTT_ENABLE == true && MQTT_LOGIN == true){
 */
 
 bool mqttReconnect() {
-  char CharBuf[18];
+  char CharBuf[40];
   String StrBuf;
-  StrBuf.reserve(18);
+  StrBuf.reserve(sizeof(CharBuf));
   StrBuf = (String(YOUR_CALL)+"-"+HW_TOPIC+"-"+String(NET_ID));
-  StrBuf.toCharArray(CharBuf, 18);
+  StrBuf.toCharArray(CharBuf, sizeof(CharBuf));
   Debugging("mqtt-id "+StrBuf);
-  if (mqttClient.connect(CharBuf)) {
+  bool connected = false;
+  if (MQTT_LOGIN == true){
+    connected = mqttClient.connect(CharBuf, MQTT_USER, MQTT_PASS);
+  }else{
+    connected = mqttClient.connect(CharBuf);
+  }
+  if (connected) {
   // if (mqttClient.connect(mac)) {
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
     IPAddress IPlocalAddr = Ethernet.localIP();                           // get
@@ -3995,8 +4022,11 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
   String CheckTopicBase; // = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/";
   CheckTopicBase.reserve(30);
-  byte* p = (byte*)malloc(length);
-  memcpy(p,payload,length);
+  String payloadString;
+  payloadString.reserve(length);
+  for (unsigned int i = 0; i < length; i++) {
+    payloadString += char(payload[i]);
+  }
 
   // String StringTMP = String(topic);
   // for (int i = 0; i < length; i++) {
@@ -4011,15 +4041,15 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
     CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/cw";
     if ( CheckTopicBase.equals( String(topic) )){
       if(ActualMode==3 || ActualMode==4){               // if mode FSK
-        FSKmemory[0] = p;
+        FSKmemory[0] = payloadString;
         FSKmemoryTX(0);
       }
       if(ActualMode==0 || ActualMode==1){               // if mode CW
         ptt_high(PTTbyMode[ActualMode]);
         // Debugging("Local CW transmit (rx buffer size "+String(length)+")");
         for (int i = 0; i < length; i++) {
-          if(p[i]!=0){
-            send_char(toUpperCase(p[i]),KEYER_NORMAL);
+          if(payload[i]!=0){
+            send_char(toUpperCase(payload[i]),KEYER_NORMAL);
             // Debugging(String(i)+"-"+p[i]);
           }
         }
@@ -4030,7 +4060,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
     // mode   0
     CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/mode";
     if ( CheckTopicBase.equals( String(topic) )){
-        ActualMode=p[0]-48;
+        ActualMode=payload[0]-48;
         SwitchHardware(ActualMode);
         MqttPubString("mode", String(ActualMode), false, true);
         Debugging("Mode:"+String(ActualMode));
@@ -4047,7 +4077,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
       freq = 0;
       unsigned long exp = 1;
       for (int i = length-1; i >=0 ; i--) {
-        freq = freq + (p[i]-48)*exp;
+        freq = freq + (payload[i]-48)*exp;
         exp = exp*10;
       }
       // KENWOOD
@@ -4071,22 +4101,22 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
     CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/wpm";
     if ( CheckTopicBase.equals( String(topic) )){
       int wpm = 0;
-      wpm = wpm + (p[0]-48)*10;
-      wpm = wpm + (p[1]-48)*1;
+      wpm = wpm + (payload[0]-48)*10;
+      wpm = wpm + (payload[1]-48)*1;
       speed_set(wpm);
     }
 
     // Debug   net-id
     CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-debug";
     if ( CheckTopicBase.equals( String(topic) )){
-      DebuggingOutput=p[0]-48;
-      Debugging("DebuggingOutput:"+p[0]);
+      DebuggingOutput=payload[0]-48;
+      Debugging("DebuggingOutput:"+payload[0]);
     }
 
     // ptt   0=off 1-3=on
     CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/ptt";
     if ( CheckTopicBase.equals( String(topic) ) && ActualMode==2){  // PTTmodeCW, PTTmodeCW, PTTmodeSSB, PTTmodeFSK, PTTmodeFSK, PTTmodeDIGI
-      if(p[0]==48){
+      if(payload[0]==48){
         ptt_low(PTTbyMode[ActualMode],3);
       }else{
         ptt_high(PTTbyMode[ActualMode]);
@@ -4106,8 +4136,8 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
         unsigned long exp = 1;
         for (int i = length-1; i >=0 ; i--) {
           // Numbers only
-          if(p[i]>=48 && p[i]<=58){
-            SteppersCounter[j] = SteppersCounter[j] + (p[i]-48)*exp;
+          if(payload[i]>=48 && payload[i]<=58){
+            SteppersCounter[j] = SteppersCounter[j] + (payload[i]-48)*exp;
             exp = exp*10;
           }
         }
@@ -4142,7 +4172,7 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
       // sL storage L match switch to H or L impedance
       CheckTopicBase = String(YOUR_CALL) + "/sm/" + String(smNET_ID[j], HEX) + "/sL";
       if ( CheckTopicBase.equals( String(topic) ) ){
-        if(p[0] == 48){
+        if(payload[0] == 48){
           sL[j]=0;
         }else{
           sL[j]=1;
@@ -4989,73 +5019,46 @@ void SendBroadcastUdp(){
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPub(String path, float value, int value2){   // PATH, float(or 0). int
-  path.reserve(20);
+  path.reserve(MQTT_PATH_BUFFER_SIZE);
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
-  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
-    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path.toCharArray( mqttPath, 20 );
-      if (value != 0){
-        String(value).toCharArray( mqttTX, 50 );
-      }else{
-        String(value2).toCharArray( mqttTX, 50 );
-      }
-      mqttClient.publish(mqttPath, mqttTX, true);
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus == 1 && mqttClient.connected() == true){
+    path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+    path.toCharArray(mqttPath, sizeof(mqttPath));
+    if (value != 0){
+      String(value).toCharArray(mqttTX, sizeof(mqttTX));
+    }else{
+      String(value2).toCharArray(mqttTX, sizeof(mqttTX));
     }
-  }else{
-    if (mqttClient.connect("arduinoClient")) {
-      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path.toCharArray( mqttPath, 20 );
-      if (value != 0){
-        String(value).toCharArray( mqttTX, 50 );
-      }else{
-        String(value2).toCharArray( mqttTX, 50 );
-      }
-      mqttClient.publish(mqttPath, mqttTX, true);
-    }
+    mqttClient.publish(mqttPath, mqttTX, true);
   }
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 }
 //-------------------------------------------------------------------------------------------------------
 void MqttPubString_old(String path, String character){
-  path.reserve(20);
-  character.reserve(50);
+  path.reserve(MQTT_PATH_BUFFER_SIZE);
+  character.reserve(MQTT_TX_BUFFER_SIZE);
   InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
-  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && MQTT_LOGIN==1){
-    if (mqttClient.connect("arduinoClient", MQTT_USER, MQTT_PASS)) {
-      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path.toCharArray( mqttPath, 20 );
-      character.toCharArray( mqttTX, 50 );
-      mqttClient.publish(mqttPath, mqttTX);
-    }
-  }else{
-    if (mqttClient.connect("arduinoClient")) {
-      path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
-      path.toCharArray( mqttPath, 20 );
-      character.toCharArray( mqttTX, 50 );
-      mqttClient.publish(mqttPath, mqttTX);
-    }
+  if(EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus == 1 && mqttClient.connected() == true){
+    path = String(YOUR_CALL) + "/oi" + String(NET_ID) + "/" + path;
+    path.toCharArray(mqttPath, sizeof(mqttPath));
+    character.toCharArray(mqttTX, sizeof(mqttTX));
+    mqttClient.publish(mqttPath, mqttTX);
   }
   InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
 }
 //-----------------------------------------------------------------------------------
 void MqttPubString(String TOPIC, String DATA, bool RETAIN, bool DEFAULTPATH){
-  TOPIC.reserve(50);
-  DATA.reserve(150);
-  char charbuf[50];
-   memcpy( charbuf, mac, 6);
-   charbuf[6] = 0;
+  TOPIC.reserve(MQTT_PATH_BUFFER_SIZE);
+  DATA.reserve(MQTT_TX_BUFFER_SIZE);
   // InterruptON(0,0,0); // keyb, enc, gps
   if(EnableEthernet==1 && MQTT_ENABLE==1 && EthLinkStatus==1 && mqttClient.connected()==true){
     InterruptON(0,0,0,0); // keyb, enc, gps, Interlock
-    if (mqttClient.connect(charbuf)) {
-      if(DEFAULTPATH==true){
-        TOPIC = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/" + TOPIC;
-      }
-      TOPIC.toCharArray( mqttPath, 50 );
-      DATA.toCharArray( mqttTX, 150 );
-      mqttClient.publish(mqttPath, mqttTX, RETAIN);
+    if(DEFAULTPATH==true){
+      TOPIC = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/" + TOPIC;
     }
+    TOPIC.toCharArray(mqttPath, sizeof(mqttPath));
+    DATA.toCharArray(mqttTX, sizeof(mqttTX));
+    mqttClient.publish(mqttPath, mqttTX, RETAIN);
     InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
   }
   // InterruptON(1,1,1); // keyb, enc, gps
@@ -6608,7 +6611,8 @@ void BandDecoder() {
     // ICOM CI-V OUT
     #if defined(ICOM_CIV_OUT)
         if(freq!= freqPrev1){                    // if change
-            txCIVout(0, freq, CIV_ADR_OUT);         // 0 - set freq
+            txCIVoutSub(0x07, 0xD2, 0x00, CIV_ADRESS);  // IC-7610: explicitly select MAIN band
+            txCIVout(5, freq, CIV_ADRESS);          // 5 - set operating frequency using configured CI-V address
             freqPrev1 = freq;
         }
     #endif
@@ -6795,12 +6799,11 @@ int txCIV(int commandCIV, long dataCIVtx, int toAddress) {
 }
 
 int txCIVout(int commandCIV, long dataCIVtx, int toAddress) {
-    //Serial2.flush();
-    Serial3.write(254);                                    // FE
-    Serial3.write(254);                                    // FE
-    Serial3.write(toAddress);                              // to adress
-    Serial3.write(fromAdress);                             // from OE
-    Serial3.write(commandCIV);                             // data
+    Serial2.write(254);                                    // FE
+    Serial2.write(254);                                    // FE
+    Serial2.write(toAddress);                              // to address
+    Serial2.write(fromAdress);                             // from OE
+    Serial2.write(commandCIV);                             // data
     if (dataCIVtx != 0){
         String freqCIVtx = String(dataCIVtx);             // to string
         freqCIVtx.reserve(10);
@@ -6811,11 +6814,23 @@ int txCIVout(int commandCIV, long dataCIVtx, int toAddress) {
         }
         for (int x=8; x>=0; x=x-2){                       // loop for 5x2 char [xx xx xx xx xx]
             freqCIVtxPart = freqCIVtx.substring(x,x+2);   // cut freq to five part
-                Serial3.write(hexToDec(freqCIVtxPart));    // HEX to DEC, because write as DEC format from HEX variable
+                Serial2.write(hexToDec(freqCIVtxPart));    // HEX to DEC, because write as DEC format from HEX variable
         }
     }
-    Serial3.write(253);                                    // FD
-    Serial3.flush();
+    Serial2.write(253);                                    // FD
+    Serial2.flush();
+}
+
+int txCIVoutSub(int commandCIV, int subCommandCIV, int dataCIVtx, int toAddress) {
+    Serial2.write(254);                                    // FE
+    Serial2.write(254);                                    // FE
+    Serial2.write(toAddress);                              // to address
+    Serial2.write(fromAdress);                             // from OE
+    Serial2.write(commandCIV);                             // command
+    Serial2.write(subCommandCIV);                          // sub-command
+    Serial2.write(dataCIVtx);                              // data
+    Serial2.write(253);                                    // FD
+    Serial2.flush();
 }
 // #OI3 END -------------------------------------------------------------------------------
 
@@ -10649,11 +10664,15 @@ void tx_and_sidetone_key (int state)
           service_straight_key();
         #endif //FEATURE_STRAIGHT_KEY
 
-        #if defined(FEATURE_WEB_SERVER)
+      #if defined(FEATURE_WEB_SERVER)
           if (speed_mode == SPEED_QRSS){
             service_web_server();
           }
         #endif //FEATURE_WEB_SERVER
+
+        // Keep an established MQTT session alive during CW spacing without
+        // touching the timing-critical key-down portion of the element.
+        MqttServiceTick();
 
     } //while ((millis() < endtime) && (millis() > 200))
 
