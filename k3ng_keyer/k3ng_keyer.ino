@@ -1314,7 +1314,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20260505";
+const char* REV = "20260517";
 
 // DEFINE HARDWARE
 #define PCB_REV_3_1415                // revision of PCB
@@ -3870,14 +3870,20 @@ bool mqttReconnect() {
       topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(MASTER_NET_ID, HEX) + "/hz";
       const char *cstr2 = topic.c_str();
       if(mqttClient.subscribe(cstr2)==true){
-        // lcd.clear();
-        // lcd.setCursor(1, 0);
-        // lcd.print(F("subscribe"));
         lcd.setCursor(0, 1);
         lcd.print(F("/hz  "));
         Debugging("MQTT subscribe to "+String(cstr2));
         delay(100);
-        // lcd.clear();
+      }
+
+      // Hz selective (this device only)
+      topic = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-hz";
+      const char *cstr2b = topic.c_str();
+      if(mqttClient.subscribe(cstr2b)==true){
+        lcd.setCursor(0, 1);
+        lcd.print(F("/set-hz"));
+        Debugging("MQTT subscribe to "+String(cstr2b));
+        delay(100);
       }
 
       // wpm
@@ -4092,6 +4098,30 @@ void MqttRx(char *topic, byte *payload, unsigned int length) {
       //          Serial2.print("FA" + freqPCtx + ";");    // first packet not read every time
          Serial2.flush();
          // freqPrev2 = freq;
+      }
+      FreqToBandRules(freq);
+      bandSET();                                              // set outputs relay
+    }
+
+    // Hz selective (this device only)
+    CheckTopicBase = String(YOUR_CALL) + "/"+HW_TOPIC+"/" + String(NET_ID, HEX) + "/set-hz";
+    if ( CheckTopicBase.equals( String(topic) )){
+      freq = 0;
+      unsigned long exp = 1;
+      for (int i = length-1; i >=0 ; i--) {
+        freq = freq + (payload[i]-48)*exp;
+        exp = exp*10;
+      }
+      // KENWOOD
+      if(BAND_DECODER_IN==2){
+          String freqPCtx = String(freq);        // to string
+          freqPCtx.reserve(12);
+          while (freqPCtx.length() < 11) {       // leding zeros
+              freqPCtx = 0 + freqPCtx;
+          }
+         Serial2.print("FA" + freqPCtx + ";");    // sets both VFO
+         Serial2.print("FB" + freqPCtx + ";");
+         Serial2.flush();
       }
       FreqToBandRules(freq);
       bandSET();                                              // set outputs relay
@@ -6692,6 +6722,7 @@ void bandSET() {
       // freqPub = freqPub/1000;
       // MqttPubString("khz", String(freqPub), false, true);
       MqttPubString("hz", String(freq), false, true);
+      MqttPubString("mode", String(ActualMode), false, true);
       MqttPubString("band", String(BAND), false, true);
       if(PttActive==false && MQTT_STEP_ENABLE ==1 && EnableEthernet == 1 && MQTT_ENABLE == 1 && EthLinkStatus==1 && freq < 7200000){
         freqMqttStepper[0]=freq;
