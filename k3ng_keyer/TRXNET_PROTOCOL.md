@@ -30,28 +30,29 @@ Device name je jedinečný identifikátor zařízení v síti. Sestavuje se za b
 
 | Část | Popis | Příklad |
 |------|-------|---------|
-| `TYP` | Typ zařízení, velká písmena | `OI3`, `TRX`, `ROT`, `PA` |
+| `TYP` | Typ zařízení, velká písmena | `OI3`, `705`, `ROT`, `PA` |
 | `.` | Oddělovač (tečka) | |
 | `ID` | NET_ID jako **2místný malý hex** bez prefixu | `ff`, `01`, `0a` |
 
 ### Příklady
 
-| NET_ID (byte) | Device name |
-|---|---|
-| `0xff` | `OI3.ff` |
-| `0x01` | `OI3.01` |
-| `0x0a` | `OI3.0a` |
+| Zařízení | NET_ID (byte) | Device name |
+|---|---|---|
+| OI3 keyer (AVR) | `0xff` | `OI3.ff` |
+| OI3 keyer (AVR) | `0x01` | `OI3.01` |
+| IC-705 Interface (ESP32) | `0x01` | `705.01` |
+| IC-705 Interface (ESP32) | `0x0a` | `705.0a` |
 
 ### Sestavení v kódu
 
 ```cpp
-// ATMEGA / AVR
+// ATMEGA / AVR — OI3 keyer
 char deviceName[TRXNET_MAX_DEVICE_NAME];
 snprintf(deviceName, sizeof(deviceName), "OI3.%02x", NET_ID);
 
-// ESP32
+// ESP32 — IC-705 Interface
 char deviceName[TRXNET_MAX_DEVICE_NAME];
-snprintf(deviceName, sizeof(deviceName), "TRX.%02x", NET_ID);
+snprintf(deviceName, sizeof(deviceName), "705.%02x", NET_ID);
 ```
 
 ### Pravidla
@@ -59,7 +60,9 @@ snprintf(deviceName, sizeof(deviceName), "TRX.%02x", NET_ID);
 - Délka max. 31 znaků (TRXNET_MAX_DEVICE_NAME = 32 včetně null).
 - Dvě zařízení se stejným device name jsou v síti považována za totožná — každé
   zařízení musí mít **unikátní NET_ID** v rámci svého typu.
-- NET_ID `0x00` není rezervováno — může být použito jako běžné ID.
+- **NET_ID `0x00` je rezervováno jako sentinel "disabled"** — zařízení s NET_ID `0x00`
+  nevolá `net.begin()` a TrxNet komunikaci neaktivuje. Tato hodnota nesmí být použita
+  jako skutečné ID v síti.
 - Nepoužívej `String` pro sestavení jména — použij `snprintf` do `char[]`.
 
 ---
@@ -110,26 +113,36 @@ void onHz(const char* from, const uint8_t* data, size_t len) {
 
 ### `uint8_t` — mód
 
-Hodnoty módu jsou shodné s interní enumerací OI3 keyeru:
+Hodnoty módu jsou **ICOM CI-V standardní mode byty**. Každé zařízení mapuje CI-V byte
+na svou interní reprezentaci. Použití CI-V bytu eliminuje konverze na straně zařízení,
+která přímo čte/nastavuje rádio přes CI-V (např. IC-705 Interface).
 
-| Hodnota | Mód |
-|---------|-----|
-| `0` | CW normální (levý paddle) |
-| `1` | CW reverzní (pravý paddle) |
-| `2` | SSB |
-| `3` | FSK (RTTY) |
-| `4` | FSK reverzní |
-| `5` | DIGI |
+| Hodnota (hex) | Mód |
+|---------------|-----|
+| `0x00` | LSB |
+| `0x01` | USB |
+| `0x02` | AM |
+| `0x03` | CW |
+| `0x04` | RTTY / FSK |
+| `0x05` | FM |
+| `0x06` | WFM |
+| `0x07` | CW-R (CW reverzní) |
+| `0x08` | RTTY-R (FSK reverzní) |
+| `0x17` | DV (D-STAR) |
+
+Zařízení, která nemají přímý CI-V přístup (např. OI3 keyer), mapují svůj interní
+mód na nejbližší CI-V ekvivalent při odesílání a zpětně při příjmu.
 
 ```cpp
-// Odesílání
-uint8_t mode = 2;  // SSB
-net.publish("/mode", &mode, sizeof(mode));
+// Odesílání — CI-V byte přímo (pro zařízení s CI-V přístupem)
+uint8_t civMode = 0x03;  // CW
+net.publish("/mode", &civMode, sizeof(civMode));
 
 // Příjem
 void onMode(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint8_t)) return;
-    uint8_t mode = data[0];
+    uint8_t civMode = data[0];
+    // mapuj civMode na interní reprezentaci zařízení
 }
 ```
 
@@ -352,9 +365,10 @@ když nejsou žádní peers je bezpečné (zpráva se zahodí, nezakrní).
 
 ## Doporučení pro nová zařízení
 
-1. **Zvol unikátní TYP** device name (`TRX`, `ROT`, `PA`, `LOG`, …) — nekoliduje
+1. **Zvol unikátní TYP** device name (`705`, `ROT`, `PA`, `LOG`, …) — nekoliduje
    s `OI3`.
 2. **NET_ID** nastav tak, aby byl unikátní v rámci svého TYPu v dané síti.
+   **NET_ID `0x00` nepoužívej** — je rezervováno jako sentinel "disabled".
 3. Publikuj jen témata která tvoje zařízení **skutečně zná** — nekopíruj témata
    jen proto, že je jiné zařízení odebírá.
 4. Subscribuj jen témata která tvoje zařízení **skutečně zpracovává**.
@@ -364,3 +378,5 @@ když nejsou žádní peers je bezpečné (zpráva se zahodí, nezakrní).
    bez `net.loop()`.
 8. Otestuj discovery na cílové síti před nasazením — bench test na jiné
    infrastruktuře nezaručuje funkčnost v produkci.
+9. **Mód publikuj jako CI-V byte** (viz sekce Formáty payloadu) — mapuj svůj
+   interní mód na nejbližší CI-V ekvivalent. Při příjmu mapuj zpětně.

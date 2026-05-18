@@ -3539,6 +3539,48 @@ void TxCwAtUTC(){
 }
 
 //-------------------------------------------------------------------------------------------------------
+// Last-used CW/FSK sub-mode hints for civModeToOi3() disambiguation.
+// Updated as side-effect of oi3ModeToCiv() — every local mode change that is
+// published via TrxNet keeps these in sync automatically.
+static int s_lastCwMode  = 0; // 0=CW Keyer, 1=CW DTR
+static int s_lastFskMode = 3; // 3=FSK PC,   4=FSK ASCII
+
+// Convert OI3 internal mode (0-5) to ICOM CI-V mode byte for TrxNet /mode publish.
+// Updates s_lastCwMode/s_lastFskMode so civModeToOi3() can reverse-map correctly.
+// CW-R (0x07) is not emitted — OI3 CW sub-modes 0 and 1 are both plain CW from CI-V perspective.
+static uint8_t oi3ModeToCiv(int oi3Mode) {
+  if (oi3Mode == 0 || oi3Mode == 1) s_lastCwMode  = oi3Mode;
+  if (oi3Mode == 3 || oi3Mode == 4) s_lastFskMode = oi3Mode;
+  switch (oi3Mode) {
+    case 0: return 0x03; // CW Keyer  → CW
+    case 1: return 0x03; // CW DTR    → CW
+    case 2: return 0x01; // SSB       → USB (OI3 doesn't distinguish LSB/USB)
+    case 3: return 0x04; // FSK PC    → RTTY
+    case 4: return 0x04; // FSK ASCII → RTTY
+    case 5: return 0x05; // DIGI/AFSK → FM
+    default: return 0x01;
+  }
+}
+
+// Convert received CI-V mode byte to OI3 internal mode.
+// CW (0x03) and RTTY (0x04) are ambiguous — resolved via s_lastCwMode/s_lastFskMode.
+// CW-R (0x07) → CW DTR (1); RTTY-R (0x08) → FSK ASCII (4).
+static int civModeToOi3(uint8_t civ) {
+  switch (civ) {
+    case 0x00: return 2;            // LSB    → SSB
+    case 0x01: return 2;            // USB    → SSB
+    case 0x02: return 2;            // AM     → SSB (closest)
+    case 0x03: return s_lastCwMode; // CW     → last used CW sub-mode
+    case 0x04: return s_lastFskMode;// RTTY   → last used FSK sub-mode
+    case 0x05: return 5;            // FM     → DIGI/AFSK
+    case 0x06: return 2;            // WFM    → SSB (closest)
+    case 0x07: return 1;            // CW-R   → CW DTR
+    case 0x08: return 4;            // RTTY-R → FSK ASCII
+    case 0x17: return 2;            // DV     → SSB (closest)
+    default:   return 2;
+  }
+}
+
 // TrxNet callbacks — called from net.loop(), must be short and non-blocking, no String on AVR
 void onSetHz(const char* from, const uint8_t* data, size_t len) {
   if (len < sizeof(uint32_t)) return;
@@ -3548,7 +3590,8 @@ void onSetHz(const char* from, const uint8_t* data, size_t len) {
 
 void onSetMode(const char* from, const uint8_t* data, size_t len) {
   if (len < sizeof(uint8_t)) return;
-  trxPendingMode = data[0];
+  // data[0] is a CI-V mode byte — convert to OI3 internal mode before queuing
+  trxPendingMode = (uint8_t)civModeToOi3(data[0]);
   trxModePending = true;
 }
 
@@ -3986,7 +4029,7 @@ void IncomingUDP(){
           ActualMode = tmp;
           if(ActualMode!=ActualModePrev){
             ActualModePrev=ActualMode;
-            { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+            { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
             SwitchHardware(ActualMode);
           }
         }
@@ -4728,7 +4771,7 @@ void OpenInterfaceMENU(){
                   }
                   if(ActualMode!=ActualModePrev){
                     ActualModePrev=ActualMode;
-                    { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+                    { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
                     SwitchHardware(ActualMode);
                   }
                 // }
@@ -5467,7 +5510,7 @@ void BandDecoder() {
                   ActualMode=CIVModeSet[rdI[5]];        // set mode by CIVModeSet table
                   if(ActualMode!=ActualModePrev){
                     ActualModePrev=ActualMode;
-                    { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+                    { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
                     SwitchHardware(ActualMode);
                   }
                 }
@@ -5549,7 +5592,7 @@ void BandDecoder() {
                       ActualMode=KenwoodCatModeSet[String(rdK[29]).toInt()];        // get mode
                       if(ActualMode!=ActualModePrev){
                         ActualModePrev=ActualMode;
-                        { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+                        { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
                         SwitchHardware(ActualMode);
                       }
                     }
@@ -5651,7 +5694,7 @@ void BandDecoder() {
                 ActualMode=YaesuModeSet[rdYO[4]];        // set mode by YaesuModeSet table
                 if(ActualMode!=ActualModePrev){
                   ActualModePrev=ActualMode;
-                  { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+                  { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
                   SwitchHardware(ActualMode);
                 }
             }
@@ -5754,7 +5797,7 @@ void bandSET() {
       // freqPub = freqPub/1000;
       // MqttPubString("khz", String(freqPub), false, true);
       { uint32_t _f = (uint32_t)freq; net.publish("/hz", (uint8_t*)&_f, sizeof(_f)); }
-      { uint8_t _m = ActualMode; net.publish("/mode", &_m, sizeof(_m)); }
+      { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
       prevfreq=freq;
     }
 }
