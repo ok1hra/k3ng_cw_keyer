@@ -1298,7 +1298,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20260517";
+const char* REV = "20260519";
 
 // DEFINE HARDWARE
 // #define FEATURE_TELNET_SERVER         // Telnet status server on port 23 (disable to save RAM/flash)
@@ -1580,8 +1580,9 @@ char* ANTname[12] = {
   uint16_t    trxPort = 5683;
   char        trxDeviceName[TRXNET_MAX_DEVICE_NAME];
   // TrxNet pending state — set in callbacks, processed in loop()
-  volatile uint32_t trxPendingHz   = 0;
-  volatile uint8_t  trxPendingMode = 0;
+  volatile uint32_t trxPendingHz      = 0;
+  volatile uint8_t  trxPendingMode    = 0;
+  volatile uint8_t  trxPendingCivMode = 0x01;
   volatile bool     trxFreqPending = false;
   volatile bool     trxModePending = false;
   char              trxPendingCW[65] = {};
@@ -2345,11 +2346,18 @@ void loop() {
       freq = (long)trxPendingHz;
       FreqToBandRules(freq);
       bandSET();
+      { uint32_t _f = (uint32_t)freq; net.publish("/hz", (uint8_t*)&_f, sizeof(_f)); }
     }
     if (trxModePending) {
       trxModePending = false;
       ActualMode = trxPendingMode;
+      ActualModePrev = ActualMode;
+      { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
       SwitchHardware(ActualMode);
+      #if defined(ICOM_CIV_OUT)
+      txCIVoutSub(0x07, 0xD2, 0x00, CIV_ADRESS);              // select MAIN band (IC-7610)
+      txCIVoutSub(0x06, trxPendingCivMode, 0x01, CIV_ADRESS); // set mode using original CI-V byte
+      #endif
     }
     if (trxCwPending) {
       trxCwPending = false;
@@ -3566,7 +3574,7 @@ void onSetHz(const char* from, const uint8_t* data, size_t len) {
 
 void onSetMode(const char* from, const uint8_t* data, size_t len) {
   if (len < sizeof(uint8_t)) return;
-  // data[0] is a CI-V mode byte — convert to OI3 internal mode before queuing
+  trxPendingCivMode = data[0];
   trxPendingMode = (uint8_t)civModeToOi3(data[0]);
   trxModePending = true;
 }

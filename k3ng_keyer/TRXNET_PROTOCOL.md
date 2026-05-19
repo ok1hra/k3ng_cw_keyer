@@ -1,49 +1,48 @@
-# TrxNet protokol — OI3 síť
+# TrxNet Protocol — OI3 Network
 
-Referenční dokument pro implementaci TrxNet komunikace na všech zařízeních v OI3 síti.
-Každé nové zařízení musí dodržovat konvence v tomto dokumentu, aby byla zaručena
-vzájemná interoperabilita.
-
----
-
-## Síťové požadavky
-
-- Všechna zařízení musí být ve **stejné L2 broadcast doméně** (stejný switch/VLAN).
-- Discovery funguje přes UDP broadcast `255.255.255.255` — nefunguje přes router nebo
-  mezi různými podsítěmi.
-- WiFi sítě s AP isolation, guest VLAN nebo mesh systémy mohou broadcast blokovat —
-  doporučena drátová Ethernet připojení (W5500/W5100).
-- Všechna zařízení musí používat **stejný UDP port: 5683** (výchozí CoAP port TrxNet).
+Reference document for implementing TrxNet communication on all devices in the OI3 network.
+Every new device must follow the conventions in this document to guarantee interoperability.
 
 ---
 
-## Pojmenování zařízení (Device Name)
+## Network Requirements
 
-Device name je jedinečný identifikátor zařízení v síti. Sestavuje se za běhu
-(po načtení konfigurace z EEPROM/SD) a předává se do `net.begin()`.
+- All devices must be in the **same L2 broadcast domain** (same switch/VLAN).
+- Discovery uses UDP broadcast `255.255.255.255` — does not work across routers or
+  between different subnets.
+- Wi-Fi networks with AP isolation, guest VLANs, or mesh systems may block broadcasts —
+  wired Ethernet connections (W5500/W5100) are recommended.
+- All devices must use the **same UDP port: 5683** (TrxNet default CoAP port).
 
-### Formát
+---
+
+## Device Naming
+
+The device name is the unique identifier of a device in the network. It is assembled at
+runtime (after loading configuration from EEPROM/SD) and passed to `net.begin()`.
+
+### Format
 
 ```
-{TYP}.{ID}
+{TYPE}.{ID}
 ```
 
-| Část | Popis | Příklad |
-|------|-------|---------|
-| `TYP` | Typ zařízení, velká písmena | `OI3`, `705`, `ROT`, `PA` |
-| `.` | Oddělovač (tečka) | |
-| `ID` | NET_ID jako **2místný malý hex** bez prefixu | `ff`, `01`, `0a` |
+| Part | Description | Example |
+|------|-------------|---------|
+| `TYPE` | Device type, uppercase letters | `OI3`, `705`, `ROT`, `PA` |
+| `.` | Separator (dot) | |
+| `ID` | NET_ID as **2-digit lowercase hex** without prefix | `ff`, `01`, `0a` |
 
-### Příklady
+### Examples
 
-| Zařízení | NET_ID (byte) | Device name |
-|---|---|---|
+| Device | NET_ID (byte) | Device name |
+|--------|--------------|-------------|
 | OI3 keyer (AVR) | `0xff` | `OI3.ff` |
 | OI3 keyer (AVR) | `0x01` | `OI3.01` |
 | IC-705 Interface (ESP32) | `0x01` | `705.01` |
 | IC-705 Interface (ESP32) | `0x0a` | `705.0a` |
 
-### Sestavení v kódu
+### Assembly in Code
 
 ```cpp
 // ATMEGA / AVR — OI3 keyer
@@ -55,54 +54,54 @@ char deviceName[TRXNET_MAX_DEVICE_NAME];
 snprintf(deviceName, sizeof(deviceName), "705.%02x", NET_ID);
 ```
 
-### Pravidla
+### Rules
 
-- Délka max. 31 znaků (TRXNET_MAX_DEVICE_NAME = 32 včetně null).
-- Dvě zařízení se stejným device name jsou v síti považována za totožná — každé
-  zařízení musí mít **unikátní NET_ID** v rámci svého typu.
-- **NET_ID `0x00` je rezervováno jako sentinel "disabled"** — zařízení s NET_ID `0x00`
-  nevolá `net.begin()` a TrxNet komunikaci neaktivuje. Tato hodnota nesmí být použita
-  jako skutečné ID v síti.
-- Nepoužívej `String` pro sestavení jména — použij `snprintf` do `char[]`.
-
----
-
-## Mapa témat (Topic Map)
-
-### Publish — odesílá OI3 keyer
-
-Tato témata OI3 keyer **odesílá**. Jiná zařízení je mohou odebírat.
-
-| Téma | Typ payloadu | Delivery | Popis |
-|------|-------------|---------|-------|
-| `/hz` | `uint32_t` LE | NON | Aktuální frekvence v Hz z CAT/CI-V |
-| `/mode` | `uint8_t` | NON | Aktuální operační mód |
-
-### Subscribe — přijímá OI3 keyer
-
-Tato témata OI3 keyer **odebírá**. Jiná zařízení je mohou publikovat.
-
-| Téma | Typ payloadu | Delivery | Popis |
-|------|-------------|---------|-------|
-| `/s-hz` | `uint32_t` LE | NON | Příkaz: nastavit frekvenci |
-| `/s-mode` | `uint8_t` | NON | Příkaz: nastavit mód |
-| `/s-cw` | `char[]` max 64 B | CON | Příkaz: odklíčovat CW text |
+- Maximum length 31 characters (TRXNET_MAX_DEVICE_NAME = 32 including null terminator).
+- Two devices with the same device name are treated as identical — every device must
+  have a **unique NET_ID** within its type.
+- **NET_ID `0x00` is reserved as a "disabled" sentinel** — a device with NET_ID `0x00`
+  does not call `net.begin()` and does not activate TrxNet communication. This value
+  must not be used as a real ID on the network.
+- Do not use `String` to assemble the name — use `snprintf` into `char[]`.
 
 ---
 
-## Formáty payloadu
+## Topic Map
 
-Veškerá data jsou přenášena jako **raw bytes v nativním byte order (little-endian)**.
-Serializace vždy přes `memcpy` — nikdy ne přes přímý cast pointeru.
+### Publish — sent by OI3 keyer
 
-### `uint32_t` — frekvence v Hz
+These topics the OI3 keyer **sends**. Other devices may subscribe to them.
+
+| Topic | Payload type | Delivery | Description |
+|-------|-------------|---------|-------------|
+| `/hz` | `uint32_t` LE | NON | Current frequency in Hz from CAT/CI-V |
+| `/mode` | `uint8_t` | NON | Current operating mode |
+
+### Subscribe — received by OI3 keyer
+
+These topics the OI3 keyer **subscribes to**. Other devices may publish them.
+
+| Topic | Payload type | Delivery | Description |
+|-------|-------------|---------|-------------|
+| `/s-hz` | `uint32_t` LE | NON | Command: set frequency |
+| `/s-mode` | `uint8_t` | NON | Command: set mode |
+| `/s-cw` | `char[]` max 64 B | CON | Command: key CW text |
+
+---
+
+## Payload Formats
+
+All data is transferred as **raw bytes in native byte order (little-endian)**.
+Serialisation always via `memcpy` — never via direct pointer cast.
+
+### `uint32_t` — frequency in Hz
 
 ```cpp
-// Odesílání
+// Sending
 uint32_t freq = 14250000UL;
-net.publish("/hz", (uint8_t*)&freq, sizeof(freq));  // 4 byty LE
+net.publish("/hz", (uint8_t*)&freq, sizeof(freq));  // 4 bytes LE
 
-// Příjem
+// Receiving
 void onHz(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint32_t)) return;
     uint32_t freq;
@@ -111,14 +110,14 @@ void onHz(const char* from, const uint8_t* data, size_t len) {
 }
 ```
 
-### `uint8_t` — mód
+### `uint8_t` — mode
 
-Hodnoty módu jsou **ICOM CI-V standardní mode byty**. Každé zařízení mapuje CI-V byte
-na svou interní reprezentaci. Použití CI-V bytu eliminuje konverze na straně zařízení,
-která přímo čte/nastavuje rádio přes CI-V (např. IC-705 Interface).
+Mode values are **ICOM CI-V standard mode bytes**. Each device maps the CI-V byte to
+its own internal representation. Using the CI-V byte eliminates conversions on the side
+of devices that read/set the radio directly via CI-V (e.g. IC-705 Interface).
 
-| Hodnota (hex) | Mód |
-|---------------|-----|
+| Value (hex) | Mode |
+|-------------|------|
 | `0x00` | LSB |
 | `0x01` | USB |
 | `0x02` | AM |
@@ -126,96 +125,105 @@ která přímo čte/nastavuje rádio přes CI-V (např. IC-705 Interface).
 | `0x04` | RTTY / FSK |
 | `0x05` | FM |
 | `0x06` | WFM |
-| `0x07` | CW-R (CW reverzní) |
-| `0x08` | RTTY-R (FSK reverzní) |
+| `0x07` | CW-R (CW reverse) |
+| `0x08` | RTTY-R (FSK reverse) |
 | `0x17` | DV (D-STAR) |
 
-Zařízení, která nemají přímý CI-V přístup (např. OI3 keyer), mapují svůj interní
-mód na nejbližší CI-V ekvivalent při odesílání a zpětně při příjmu.
+Devices without direct CI-V access (e.g. OI3 keyer) map their internal mode to the
+closest CI-V equivalent when sending, and map back when receiving.
 
 ```cpp
-// Odesílání — CI-V byte přímo (pro zařízení s CI-V přístupem)
+// Sending — CI-V byte directly (for devices with CI-V access)
 uint8_t civMode = 0x03;  // CW
 net.publish("/mode", &civMode, sizeof(civMode));
 
-// Příjem
+// Receiving — convert CI-V to device's internal representation
 void onMode(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint8_t)) return;
     uint8_t civMode = data[0];
-    // mapuj civMode na interní reprezentaci zařízení
+    int internalMode = civModeToInternal(civMode);  // device-specific mapping
 }
 ```
 
 ### `char[]` — CW text
 
 ```cpp
-// Odesílání (CON — spolehlivé doručení)
+// Sending (CON — reliable delivery)
 const char* msg = "CQ CQ DE OK1HRA K";
 net.publish("/s-cw", (const uint8_t*)msg, strlen(msg), TRX_CON);
-// NEPŘIDÁVEJ null terminátor do len — strlen() ho nezahrnuje
+// DO NOT add null terminator to len — strlen() does not include it
 
-// Příjem — VŽDY přidej null terminátor ručně
+// Receiving — ALWAYS add null terminator manually
 void onSetCw(const char* from, const uint8_t* data, size_t len) {
     char buf[65] = {};
     size_t n = (len < 64) ? len : 64;
     memcpy(buf, data, n);
     buf[n] = '\0';
-    // buf obsahuje CW text
+    // buf contains CW text
 }
 ```
 
-**Maximální délka CW textu: 64 bytů.** Delší text bude TrxNet tiše oříznut na straně
-odesílatele. Příjemce dostane kratší text bez chyby — vždy ověřuj délku.
+**Maximum CW text length: 64 bytes.** Longer text will be silently truncated by TrxNet
+on the sender side. The receiver gets a shorter text without an error — always check the
+length.
 
 ---
 
-## Konfigurace TrxNet
+## TrxNet Configuration
 
-Definuj **před** `#include <TrxNet.h>`:
+The default values in `TrxNet.h` are already tuned for ATMEGA2560 (8 KB RAM) and an
+OI3 network with 3–5 peers:
+
+| Constant | Default | Description |
+|----------|---------|-------------|
+| `TRXNET_MAX_PEERS` | 6 | max peers in the network |
+| `TRXNET_MAX_SUBS` | 8 | max subscribe registrations |
+| `TRXNET_MAX_PENDING` | 2 | outgoing CON queue (raise if the device sends CON) |
+| `TRXNET_MAX_SEEN` | 16 | dedup buffer for incoming CON |
+
+Static RAM with these values: **~920 bytes**.
+
+No explicit `#define` overrides are needed for the OI3 keyer — the header defaults apply.
+Simply include the library:
 
 ```cpp
-// Pro ATMEGA2560 (8 KB RAM) — tuned pro OI3 síť s 3–5 peers
-#define TRXNET_MAX_PEERS    6   // max peerů v síti
-#define TRXNET_MAX_SUBS     8   // max subscribe registrací
-#define TRXNET_MAX_PENDING  2   // fronta odchozích CON (zvedni pokud zařízení posílá CON)
-#define TRXNET_MAX_SEEN    16   // dedup buffer příchozích CON
-
 #include <TrxNet.h>
 ```
 
-Statická RAM při těchto hodnotách: **~920 bytů**.
+For ESP32 or devices with more RAM, the defaults are sufficient or can be raised as needed.
 
-Pro ESP32 nebo zařízení s více RAM ponech výchozí hodnoty (TRXNET_MAX_PEERS=8,
-TRXNET_MAX_PENDING=8 atd.) nebo zvedni podle potřeby.
-
-Pokud zařízení **posílá CON zprávy** (např. CW text), nastav:
+If the device **sends CON messages** (e.g. CW text), set:
 ```cpp
-#define TRXNET_MAX_PENDING  (TRXNET_MAX_PEERS)  // jeden CON publish = N slotů (jeden na peer)
+#define TRXNET_MAX_PENDING  (TRXNET_MAX_PEERS)  // one CON publish = N slots (one per peer)
+#include <TrxNet.h>
 ```
 
 ---
 
-## Inicializace
+## Initialisation
 
-`net.begin()` musí být voláno **až po** úspěšném připojení k síti (Ethernet nebo WiFi).
+`net.begin()` must be called **after** a successful network connection (Ethernet or WiFi).
+If the port is configurable from EEPROM, call `net.setPort()` before `net.begin()`.
 
 ```cpp
 // ATMEGA2560 + Ethernet2 (W5500)
 #include <Ethernet2.h>
-#include <EthernetUdp2.h>    // nebo EthernetUDP dle verze knihovny
+#include <EthernetUdp2.h>    // or EthernetUDP depending on library version
 #include <TrxNet.h>
 
 EthernetUDP trxUdp;
-TrxNet      net(trxUdp);    // port 5683 (výchozí)
+TrxNet      net(trxUdp);    // port 5683 (default)
 
-char deviceName[TRXNET_MAX_DEVICE_NAME];
+uint16_t    trxPort = 5683; // can be overridden from EEPROM/settings
+char        deviceName[TRXNET_MAX_DEVICE_NAME];
 
 void setup() {
     byte mac[] = { ... };
-    Ethernet.begin(mac);        // DHCP nebo statická IP
+    Ethernet.begin(mac);        // DHCP or static IP
 
     snprintf(deviceName, sizeof(deviceName), "OI3.%02x", NET_ID);
-    net.begin(deviceName);      // ← až zde, po Ethernet.begin()
+    net.setPort(trxPort);       // ← set port before begin() if configurable
+    net.begin(deviceName);      // ← here, after Ethernet.begin()
 
     net.subscribe("/s-hz",   onSetHz);
     net.subscribe("/s-mode", onSetMode);
@@ -246,26 +254,26 @@ void setup() {
 
 ---
 
-## Vzor callbacků (ATMEGA / AVR)
+## Callback Pattern (ATMEGA / AVR)
 
-Na AVR platí **přísný zákaz `String` třídy** v callbackech — heap fragmentace způsobí
-crash po hodinách provozu. Používej výhradně `char[]` a `memcpy`.
+On AVR, the **`String` class is strictly forbidden** in callbacks — heap fragmentation
+will cause a crash after hours of operation. Use only `char[]` and `memcpy`.
 
-Callbacky musí být **krátké a neblokující** — žádný `delay()`, žádné čtení ze sériové
-linky, žádné volání funkcí s dlouhou dobou běhu. Callback pouze nastaví flag a uloží
-hodnotu; hlavní smyčka zpracuje.
+Callbacks must be **short and non-blocking** — no `delay()`, no serial reads, no
+long-running functions. A callback only sets a flag and stores a value; the main loop
+processes it.
 
 ```cpp
-// Globální stav pro předávání z callbacků do hlavní smyčky
+// Global state for passing from callbacks to the main loop
 volatile uint32_t pendingHz    = 0;
-volatile uint8_t  pendingMode  = 0;
+volatile uint8_t  pendingMode  = 0; // device internal mode
 volatile bool     freqPending  = false;
 volatile bool     modePending  = false;
 
 char             pendingCW[65] = {};
 volatile bool    cwPending     = false;
 
-// Callbacky — jen uložení + flag
+// Callbacks — store + flag only
 void onSetHz(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint32_t)) return;
     memcpy((void*)&pendingHz, data, sizeof(uint32_t));
@@ -274,7 +282,7 @@ void onSetHz(const char* from, const uint8_t* data, size_t len) {
 
 void onSetMode(const char* from, const uint8_t* data, size_t len) {
     if (len < sizeof(uint8_t)) return;
-    pendingMode = data[0];
+    pendingMode = (uint8_t)civModeToInternal(data[0]); // convert CI-V to internal
     modePending = true;
 }
 
@@ -288,95 +296,111 @@ void onSetCw(const char* from, const uint8_t* data, size_t len) {
 
 ---
 
-## Integrace do hlavní smyčky
+## Main Loop Integration
 
 ```cpp
 void loop() {
-    Ethernet.maintain();    // nebo WiFi keepalive na ESP32
-    net.loop();             // MUSÍ být voláno každou iterací bez blokování
+    Ethernet.maintain();    // or WiFi keepalive on ESP32
+    net.loop();             // MUST be called every iteration without blocking
 
-    // Zpracování flagů z callbacků
+    // Process flags from callbacks
     if (freqPending) {
         freqPending = false;
-        // zpracuj pendingHz
+        // process pendingHz
     }
     if (modePending) {
         modePending = false;
-        // zpracuj pendingMode
+        // process pendingMode (already converted to internal representation)
     }
     if (cwPending) {
         cwPending = false;
-        // zpracuj pendingCW[] char po charu
+        // process pendingCW[] character by character
     }
 
-    // ... zbytek smyčky
+    // ... rest of loop
 }
 ```
 
-`net.loop()` nesmí být přerušeno zákazem přerušení (`cli()` / `noInterrupts()`).
-Pokud kód v daném místě zakazuje přerušení, volej `net.loop()` mimo tuto sekci.
+`net.loop()` must not be interrupted by disabling interrupts (`cli()` / `noInterrupts()`).
+If code at a given point disables interrupts, call `net.loop()` outside that section.
 
-Pokud zařízení obsahuje dlouhé operace (CW klíčování, čtení SD karty), přidej
-`net.loop()` i **uvnitř těchto operací** — CON retransmit okno je 2 sekundy.
-Blokování delší než ~2 s způsobí ztrátu CON ACK a zbytečné retransmise.
+If the device contains long operations (CW keying, SD card reads), add `net.loop()`
+**inside those operations as well** — the CON retransmit window is 2 seconds.
+Blocking longer than ~2 s will cause CON ACK loss and unnecessary retransmissions.
 
 ---
 
-## Publish — kdy a jak
+## Publish — When and How
 
-Publikuj vždy **při změně hodnoty**, ne v pevném časovém intervalu — zbytečné
-opakované publish zbytečně zatěžuje síť a CON frontu příjemců.
+Publish always **on value change**, not on a fixed time interval — unnecessary repeated
+publishing wastes network bandwidth and the CON queues of receivers.
 
 ```cpp
-// Správně — při změně
+// Correct — on change
 if (freq != freqPrev) {
     uint32_t f = freq;
     net.publish("/hz", (uint8_t*)&f, sizeof(f));
     freqPrev = freq;
 }
 
-// Správně — při změně módu
+// Correct — on mode change
 if (ActualMode != modePrev) {
-    uint8_t m = ActualMode;
+    uint8_t m = modeToCI-V(ActualMode);  // convert internal to CI-V byte
     net.publish("/mode", &m, sizeof(m));
     modePrev = ActualMode;
 }
 ```
 
-Pokud není žádný peer znám (`net.peerCount() == 0`), `net.publish()` nedělá nic —
-není potřeba to hlídat ručně.
+If no peer is known (`net.peerCount() == 0`), `net.publish()` does nothing —
+no manual guard is needed.
 
 ---
 
-## Discovery a timing
+## Public API Summary
 
-| Parametr | Hodnota | Popis |
-|----------|---------|-------|
+| Method | Description |
+|--------|-------------|
+| `TrxNet(UDP& udp, uint16_t port = 5683)` | Constructor. Pass a WiFiUDP or EthernetUDP instance. |
+| `void setPort(uint16_t port)` | Override port before `begin()`. Use when port is loaded from EEPROM. |
+| `void begin(const char* name)` | Start the library after network is up. Sends PROBE broadcast. |
+| `void loop()` | Process incoming packets, keepalive, CON retransmit. Call every loop iteration. |
+| `void subscribe(const char* path, TrxNetCallback cb)` | Register a callback for a topic path. Registering the same path replaces the callback. |
+| `void unsubscribe(const char* path)` | Remove a subscription. |
+| `void publish(const char* path, const uint8_t* data, size_t len, TrxMsgType type = TRX_NON)` | Send payload to all known peers. `TRX_NON`: fire-and-forget. `TRX_CON`: retransmit until ACKed. |
+| `int peerCount() const` | Number of currently active peers. |
+| `const TrxPeer* peer(int index) const` | Read-only access to peer by index. Returns NULL if out of range. |
+
+---
+
+## Discovery and Timing
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
 | `TRXNET_ANNOUNCE_MS` | 30 000 ms | keepalive broadcast interval |
-| `TRXNET_PEER_TIMEOUT_MS` | 95 000 ms | peer odstraněn po ~3 zmeškaných keepalive |
+| `TRXNET_PEER_TIMEOUT_MS` | 95 000 ms | peer removed after ~3 missed keepalives |
 | `TRXNET_CON_TIMEOUT_MS` | 2 000 ms | CON retransmit interval |
-| `TRXNET_CON_MAX_RETRIES` | 3 | počet pokusů před vzdáním |
+| `TRXNET_CON_MAX_RETRIES` | 3 | number of attempts before giving up |
 
-Po `net.begin()` se rozešle **PROBE** broadcast — ostatní peers odpovědí. Za normálních
-podmínek jsou peers viditelní do ~100 ms. Nečekej na peery aktivní smyčkou — publish
-když nejsou žádní peers je bezpečné (zpráva se zahodí, nezakrní).
+After `net.begin()` a **PROBE** broadcast is sent — other peers respond. Under normal
+conditions peers are visible within ~100 ms. Do not wait for peers in an active loop —
+publishing when there are no peers is safe (the message is discarded, no harm done).
 
 ---
 
-## Doporučení pro nová zařízení
+## Guidelines for New Devices
 
-1. **Zvol unikátní TYP** device name (`705`, `ROT`, `PA`, `LOG`, …) — nekoliduje
-   s `OI3`.
-2. **NET_ID** nastav tak, aby byl unikátní v rámci svého TYPu v dané síti.
-   **NET_ID `0x00` nepoužívej** — je rezervováno jako sentinel "disabled".
-3. Publikuj jen témata která tvoje zařízení **skutečně zná** — nekopíruj témata
-   jen proto, že je jiné zařízení odebírá.
-4. Subscribuj jen témata která tvoje zařízení **skutečně zpracovává**.
-5. V callbacku vždy ověřuj délku payloadu (`if (len < sizeof(T)) return;`).
-6. Nepoužívej `String` v callbackech na AVR.
-7. Nevolej `delay()` v callbackech ani v místech kde by blokování přesáhlo 2 s
-   bez `net.loop()`.
-8. Otestuj discovery na cílové síti před nasazením — bench test na jiné
-   infrastruktuře nezaručuje funkčnost v produkci.
-9. **Mód publikuj jako CI-V byte** (viz sekce Formáty payloadu) — mapuj svůj
-   interní mód na nejbližší CI-V ekvivalent. Při příjmu mapuj zpětně.
+1. **Choose a unique TYPE** for the device name (`705`, `ROT`, `PA`, `LOG`, …) —
+   must not collide with `OI3`.
+2. **Set NET_ID** so it is unique within its TYPE on the given network.
+   **Do not use NET_ID `0x00`** — it is reserved as the "disabled" sentinel.
+3. Publish only topics that your device **actually knows** — do not copy topics just
+   because another device subscribes to them.
+4. Subscribe only to topics that your device **actually processes**.
+5. In every callback, always validate the payload length (`if (len < sizeof(T)) return;`).
+6. Do not use `String` in callbacks on AVR.
+7. Do not call `delay()` in callbacks or in any place where blocking would exceed 2 s
+   without a `net.loop()` call.
+8. Test discovery on the target network before deployment — a bench test on different
+   infrastructure does not guarantee it works in production.
+9. **Publish mode as a CI-V byte** (see Payload Formats) — map your internal mode to
+   the closest CI-V equivalent. On receive, map back to your internal representation.
