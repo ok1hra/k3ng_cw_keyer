@@ -1298,7 +1298,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20260519";
+const char* REV = "20260521";
 
 // DEFINE HARDWARE
 // #define FEATURE_TELNET_SERVER         // Telnet status server on port 23 (disable to save RAM/flash)
@@ -1587,6 +1587,7 @@ char* ANTname[12] = {
   volatile bool     trxModePending = false;
   char              trxPendingCW[65] = {};
   volatile bool     trxCwPending   = false;
+  volatile bool     trxCwAbort     = false;
   byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   IPAddress ip(192, 168, 1, 220);         // IP
@@ -1839,7 +1840,7 @@ const char* modeLCD[6][3] = {
     {"|DIG", "Data  AFSK", "DIG"},
 };
 
-const char* MenuTree[32] = {
+const char* MenuTree[33] = {
   "          ",      //  0 call
   // "PCB 3.1415",      //  1
   "rev",             //  1
@@ -1872,7 +1873,8 @@ const char* MenuTree[32] = {
   "PTTout",          // 28  PTT outputs by mode
   "IP ",             // 29  IP 1/2
   "   ",             // 30  IP 2/2
-  "",                // 31  MQTT stepper
+  "TrxN ",           // 31  TrxNet device name
+  "Peers",           // 32  TrxNet peer count
 };
 int MenuTreeSize = (sizeof(MenuTree)/sizeof(char *)); //array size
 int CulumnPositionEnd;
@@ -2361,16 +2363,21 @@ void loop() {
     }
     if (trxCwPending) {
       trxCwPending = false;
+      InterruptON(0,0,0,0); // keyb, enc, gps, Interlock — prevent INTERLOCK ISR during TX
       if (ActualMode == 3 || ActualMode == 4) {
         FSKmemory[0] = trxPendingCW;
         FSKmemoryTX(0);
       } else if (ActualMode == 0 || ActualMode == 1) {
+        trxCwAbort = false;
         ptt_high(PTTbyMode[ActualMode]);
         for (int _i = 0; trxPendingCW[_i] != '\0'; _i++) {
+          if (EnableEthernet==1 && EthLinkStatus==1) net.loop(); // ACK CON retransmits + handle abort
+          if (trxCwAbort) { trxCwAbort = false; break; }
           send_char(toUpperCase(trxPendingCW[_i]), KEYER_NORMAL);
         }
         ptt_low(PTTbyMode[ActualMode], 4);
       }
+      InterruptON(1,1,1,1); // keyb, enc, gps, Interlock
     }
     BandDecoder();
     DCinMeasure();
@@ -3580,6 +3587,7 @@ void onSetMode(const char* from, const uint8_t* data, size_t len) {
 }
 
 void onSetCw(const char* from, const uint8_t* data, size_t len) {
+  if (len == 1 && data[0] == 0xFF) { trxCwAbort = true; return; }
   size_t n = (len < 64) ? len : 64;
   memcpy(trxPendingCW, data, n);
   trxPendingCW[n] = '\0';
@@ -4682,6 +4690,21 @@ void MenuToLCD(int nr){
       lcd.print(F("."));
       lcd.print(Ethernet.localIP()[3]);
       CulumnPosition=CulumnPosition+String(Ethernet.localIP()[2]+".."+Ethernet.localIP()[3]).length()+1;
+    break;
+    }
+    case 31:{ // TrxNet device name (max 8 chars)
+      lcd.setCursor(CulumnPosition-1, 1);
+      char _dn[9];
+      strncpy(_dn, trxDeviceName, 8);
+      _dn[8] = '\0';
+      lcd.print(_dn);
+      CulumnPosition += strlen(_dn);
+    break;
+    }
+    case 32:{ // TrxNet peer count
+      lcd.setCursor(CulumnPosition-1, 1);
+      lcd.print(net.peerCount());
+      CulumnPosition += 1;
     break;
     }
 
@@ -9750,6 +9773,7 @@ void tx_and_sidetone_key (int state)
         #endif //FEATURE_STRAIGHT_KEY
 
         if (EnableEthernet==1 && EthLinkStatus==1) net.loop();
+        if (trxCwAbort) break;
 
     } //while ((millis() < endtime) && (millis() > 200))
 
@@ -11294,6 +11318,7 @@ void send_the_dits_and_dahs(char const * cw_to_send){
   sending_mode = AUTOMATIC_SENDING;
 
   for (int x = 0;x < 12;x++){
+    if (trxCwAbort) return;
     switch(cw_to_send[x]){
       case '.': send_dit(); break;
       case '-': send_dah(); break;
@@ -13776,6 +13801,7 @@ void check_serial(){
 
   while (primary_serial_port->available() > 0) {
     incoming_serial_byte = primary_serial_port->read();
+    if (incoming_serial_byte == 3) { clear_send_buffer(); continue; }  // ETX = abort TX
     #ifdef FEATURE_SLEEP
       last_activity_time = millis();
     #endif //FEATURE_SLEEP

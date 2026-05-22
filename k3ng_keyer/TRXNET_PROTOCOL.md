@@ -85,7 +85,7 @@ These topics the OI3 keyer **subscribes to**. Other devices may publish them.
 |-------|-------------|---------|-------------|
 | `/s-hz` | `uint32_t` LE | NON | Command: set frequency |
 | `/s-mode` | `uint8_t` | NON | Command: set mode |
-| `/s-cw` | `char[]` max 64 B | CON | Command: key CW text |
+| `/s-cw` | `char[]` max 64 B | CON | Command: key CW text; single byte `0x03` (ETX) = abort TX immediately |
 
 ---
 
@@ -166,6 +166,19 @@ void onSetCw(const char* from, const uint8_t* data, size_t len) {
 **Maximum CW text length: 64 bytes.** Longer text will be silently truncated by TrxNet
 on the sender side. The receiver gets a shorter text without an error — always check the
 length.
+
+**Abort transmission:** Send a single byte `0x03` (ASCII ETX, Ctrl+C) to immediately
+clear the send buffer and stop keying. This character is not used in normal CW or RTTY
+text. The k3ng keyer detects it in the serial input loop and calls `clear_send_buffer()`
+before the byte reaches the CLI handler.
+
+```cpp
+// Sending abort from ESP32 (IC-705 Interface)
+const uint8_t etx = 0x03;
+net.publish("/s-cw", &etx, 1, TRX_CON);
+```
+
+Triggered by pressing `Esc` on the QRPLog page when no dialog is open.
 
 ---
 
