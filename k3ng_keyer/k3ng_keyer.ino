@@ -1298,7 +1298,7 @@ unsigned long automatic_sending_interruption_time = 0;
   - při navoleném režimu SSB skutečně nefunguje PTT výstup ven... stačí vybrat třeba digi nebo cwd a PTT je OK. Pouze při SSB nic. > viz. menu 28
 
 ---------------------------------------------------------------------------------------------------------*/
-const char* REV = "20260521";
+const char* REV = "20260523";
 
 // DEFINE HARDWARE
 // #define FEATURE_TELNET_SERVER         // Telnet status server on port 23 (disable to save RAM/flash)
