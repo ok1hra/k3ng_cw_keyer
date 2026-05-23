@@ -2348,6 +2348,9 @@ void loop() {
       freq = (long)trxPendingHz;
       FreqToBandRules(freq);
       bandSET();
+      // Event-driven CIV SET to radio — only on network /s-hz, never on local read (no feedback loop)
+      txCIVoutSub(0x07, 0xD2, 0x00, CIV_ADRESS);              // select MAIN band (IC-7610)
+      txCIVout(5, freq, CIV_ADRESS);                          // 5 = set operating frequency
       { uint32_t _f = (uint32_t)freq; net.publish("/hz", (uint8_t*)&_f, sizeof(_f)); }
     }
     if (trxModePending) {
@@ -2356,10 +2359,9 @@ void loop() {
       ActualModePrev = ActualMode;
       { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
       SwitchHardware(ActualMode);
-      #if defined(ICOM_CIV_OUT)
+      // Event-driven CIV SET to radio — only on network /s-mode
       txCIVoutSub(0x07, 0xD2, 0x00, CIV_ADRESS);              // select MAIN band (IC-7610)
       txCIVoutSub(0x06, trxPendingCivMode, 0x01, CIV_ADRESS); // set mode using original CI-V byte
-      #endif
     }
     if (trxCwPending) {
       trxCwPending = false;
