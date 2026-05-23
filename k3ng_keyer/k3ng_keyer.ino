@@ -1421,7 +1421,7 @@ D31 - PA-PTT >  7-DB25 PA   12-DB15
 // BAND DECODER Outputs [NOT IMPLEMENTED]
 // int SERBAUD3           = 115200;// [baud] CAT Serial port in/out baudrate
 // #define BCD_OUT                 // output 11-14 relay used as Yaesu BCD
-#define ICOM_CIV_OUT            // send frequency to CIV on Serial3 using CIV_ADRESS from oi0.cfg
+// #define ICOM_CIV_OUT            // send frequency to CIV on Serial3 using CIV_ADRESS from oi0.cfg // DISABLED: feedback loop when reading via Kenwood protocol - causes frequency jump-back during tuning
 // #define KENWOOD_PC_OUT        // send frequency to RS232 CAT ** for operation must disable REQUEST **
 // #define YAESU_CAT_OUT         // send frequency to RS232 CAT ** for operation must disable REQUEST **
 // #define REMOTE_RELAY          // TCP/IP remote relay - need install and configure TCP232 module
