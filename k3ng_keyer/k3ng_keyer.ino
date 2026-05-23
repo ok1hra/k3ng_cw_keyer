@@ -1416,6 +1416,12 @@ D31 - PA-PTT >  7-DB25 PA   12-DB15
                                       // 6=YAESU_BCD 7=ICOM_ACC (voltage 0-8V on ACC19 pin connector - need calibrate)
  int BAND_DECODER_WATCHDOG = 10000;   // [ms] determines the time, after which the BCD output switch to OFF and Frequency to 0 | 0=disable
  int BAND_DECODER_REQUEST  = 2000;    // [ms] use TXD output for sending frequency request, if not detect frequency in sniff mode  | 0=disable
+ // Adaptive polling: after a freq/mode change, switch to FAST interval for ACTIVITY_HOLD ms.
+ // Lowers band-change latency for peers (PA, antenna switch) without permanent CAT load.
+ // For radios with CI-V transceive / Kenwood AI 2 / Yaesu auto-info enabled, sniff already
+ // gives ~ms latency and this only affects request fallback.
+ #define BAND_DECODER_REQUEST_FAST    200    // [ms] poll interval while operator is active
+ #define BAND_DECODER_ACTIVITY_HOLD   10000  // [ms] stay in FAST this long after last change
  int CIV_ADRESS            = 0x56;       // CIV input HEX Icom adress (0x is prefix)
 
 // BAND DECODER Outputs [NOT IMPLEMENTED]
@@ -1573,7 +1579,8 @@ char* ANTname[12] = {
   // #include <Ethernet2.h> // and disable on line #749
   // #include <EthernetUdp2.h>
   // TrxNet — P2P telemetry, replaces PubSubClient/MQTT
-  // Defaults are set in TrxNet.h (PEERS=6, SUBS=8, PENDING=2, SEEN=16)
+  // PENDING/PEERS/etc. tuned via defaults in TrxNet.h — sketch-level #define
+  // is silently broken by Arduino IDE's separate library compilation (ODR).
   #include <TrxNet.h>
   EthernetUDP trxUdp;
   TrxNet      net(trxUdp);
@@ -1588,6 +1595,12 @@ char* ANTname[12] = {
   char              trxPendingCW[65] = {};
   volatile bool     trxCwPending   = false;
   volatile bool     trxCwAbort     = false;
+  // Greeting queue — onPeerJoined fills, loop() drains via republishState()
+  char              trxPendingGreet[TRXNET_MAX_PEERS][TRXNET_MAX_DEVICE_NAME];
+  volatile uint8_t  trxPendingGreetCount = 0;
+  // Forward decl — Arduino auto-prototype may sit above TrxNet.h include otherwise
+  void onPeerJoined(const TrxPeer* peer);
+  void republishState(const char* peerName);
   byte LastMac = 0xFF - NET_ID;
   byte mac[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, LastMac};
   IPAddress ip(192, 168, 1, 220);         // IP
@@ -1934,6 +1947,7 @@ byte rxShiftInButton[3]{0,0,0};  // three button bank: 1-8 switch, 9-16 one from
 int BAND;
 unsigned long freq = 0;
 unsigned long prevfreq=1;
+unsigned long lastFreqChangeAt = 0;   // millis() of last detected freq/mode change — adaptive polling tracker
 // #if defined(ICOM_ACC)
     const int AD PROGMEM = ACC19;
     int VALUE = 0;
@@ -2362,6 +2376,20 @@ void loop() {
       // Event-driven CIV SET to radio — only on network /s-mode
       txCIVoutSub(0x07, 0xD2, 0x00, CIV_ADRESS);              // select MAIN band (IC-7610)
       txCIVoutSub(0x06, trxPendingCivMode, 0x01, CIV_ADRESS); // set mode using original CI-V byte
+    }
+    // Drain greeting queue — one peer per loop() iteration so _pending stays
+    // bounded (each peer enqueues 2 CON slots; processing serially leaves
+    // room for retries and avoids overflowing the 4-slot pending buffer).
+    // Defer until freq != 0 so peers don't receive a /hz=0 snapshot before
+    // the first CAT response has populated the keyer's state.
+    if (trxPendingGreetCount > 0 && EnableEthernet==1 && EthLinkStatus==1 && freq != 0) {
+      trxPendingGreetCount--;
+      republishState(trxPendingGreet[trxPendingGreetCount]);
+    }
+    // Adaptive band-decoder polling — return to SLOW after ACTIVITY_HOLD ms of no change
+    if (Timeout[4][1] != BAND_DECODER_REQUEST &&
+        (millis() - lastFreqChangeAt) > BAND_DECODER_ACTIVITY_HOLD) {
+      Timeout[4][1] = BAND_DECODER_REQUEST;
     }
     if (trxCwPending) {
       trxCwPending = false;
@@ -3596,6 +3624,26 @@ void onSetCw(const char* from, const uint8_t* data, size_t len) {
   trxCwPending = true;
 }
 
+// Fired by TrxNet when a new peer is discovered. Just enqueue the name —
+// actual publishTo() runs in loop() to stay out of UDP receive re-entrancy.
+void onPeerJoined(const TrxPeer* peer) {
+  if (!peer) return;
+  if (trxPendingGreetCount >= TRXNET_MAX_PEERS) return;
+  strncpy(trxPendingGreet[trxPendingGreetCount], peer->name, TRXNET_MAX_DEVICE_NAME - 1);
+  trxPendingGreet[trxPendingGreetCount][TRXNET_MAX_DEVICE_NAME - 1] = '\0';
+  trxPendingGreetCount++;
+}
+
+// Send current state snapshot to a single peer (used on join).
+// Must include every topic this device publishes — keep in sync with bandSET()
+// and other publish sites.
+void republishState(const char* peerName) {
+  uint32_t f = (uint32_t)freq;
+  uint8_t  m = oi3ModeToCiv(ActualMode);
+  net.publishTo(peerName, "/hz",   (uint8_t*)&f, sizeof(f), TRX_CON);
+  net.publishTo(peerName, "/mode", &m,            sizeof(m), TRX_CON);
+}
+
 //-------------------------------------------------------------------------------------------------------
 #if defined(FEATURE_TELNET_SERVER)
 void telnet_print_status(EthernetClient& client) {
@@ -3744,10 +3792,15 @@ void EthernetCheck(){
       // TrxNet init — po Ethernet.begin(), jmeno sestaveno z NET_ID
       snprintf(trxDeviceName, sizeof(trxDeviceName), "OI3.%02x", NET_ID);
       net.setPort(trxPort);
+      net.onPeerAdded(onPeerJoined);   // must be set BEFORE begin() to catch the first probe replies
       net.begin(trxDeviceName);
       net.subscribe("/s-hz",   onSetHz);
       net.subscribe("/s-mode", onSetMode);
       net.subscribe("/s-cw",   onSetCw);
+      // Start in FAST mode so the first CAT response arrives within ~200ms,
+      // covering peers that join before the keyer has learned the radio's state.
+      lastFreqChangeAt = millis();
+      Timeout[4][1] = BAND_DECODER_REQUEST_FAST;
       Debugging("TrxNet begin: " + String(trxDeviceName));
     } // end ETH-ON
     EthLinkStatusTimer[0]=millis();
@@ -5812,6 +5865,8 @@ void bandSET() {
       { uint32_t _f = (uint32_t)freq; net.publish("/hz", (uint8_t*)&_f, sizeof(_f)); }
       { uint8_t _m = oi3ModeToCiv(ActualMode); net.publish("/mode", &_m, sizeof(_m)); }
       prevfreq=freq;
+      lastFreqChangeAt = millis();          // adaptive polling: stay in FAST for ACTIVITY_HOLD ms
+      Timeout[4][1] = BAND_DECODER_REQUEST_FAST;
     }
 }
 

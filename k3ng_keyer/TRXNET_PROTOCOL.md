@@ -74,8 +74,13 @@ These topics the OI3 keyer **sends**. Other devices may subscribe to them.
 
 | Topic | Payload type | Delivery | Description |
 |-------|-------------|---------|-------------|
-| `/hz` | `uint32_t` LE | NON | Current frequency in Hz from CAT/CI-V |
-| `/mode` | `uint8_t` | NON | Current operating mode |
+| `/hz` | `uint32_t` LE | NON on change, **CON** on peer join | Current frequency in Hz from CAT/CI-V |
+| `/mode` | `uint8_t` | NON on change, **CON** on peer join | Current operating mode |
+
+On every new peer discovery the keyer sends a state snapshot (all topics above)
+to the joining peer as **CON** for guaranteed delivery — so PA / antenna switch /
+web UI joining mid-session do not have to wait for the operator to retune.
+See [Greeting Protocol](#greeting-protocol) below.
 
 ### Subscribe — received by OI3 keyer
 
@@ -369,6 +374,89 @@ no manual guard is needed.
 
 ---
 
+## Greeting Protocol
+
+When a new peer joins the network, the keyer sends a **state snapshot** to that
+peer — every topic the keyer normally publishes is sent once, as **CON** for
+guaranteed delivery.
+
+**Why:** without greeting, a PA / antenna switch / web UI that joins mid-session
+would not learn the current frequency and mode until the operator next changes
+them. That can mean the wrong antenna / wrong filter bank for an indefinite time.
+
+**How — publisher side (this keyer):**
+
+1. Register a peer-added callback: `net.onPeerAdded(onPeerJoined)` (must be set
+   **before** `net.begin()` to catch the first probe replies).
+2. The callback runs inside `net.loop()` during UDP receive — it must not call
+   `publish()` directly. Instead it enqueues the peer name in a small array.
+3. The main `loop()` drains the queue and calls `republishState(peerName)`,
+   which sends every topic via `net.publishTo(peerName, ..., TRX_CON)`.
+4. `republishState()` must stay in sync with the regular publish sites — when
+   you add a new state topic, add it here too.
+
+See the keyer source: `onPeerJoined()`, `republishState()`, and the greeting
+drain block in `loop()`.
+
+**How — subscriber side (PA, antenna switch, …):**
+
+No action required. The greeting arrives as a normal `/hz` / `/mode` publish
+on the topic the device already subscribes to. The CON delivery guarantees
+the message survives a single UDP drop.
+
+**Buffer sizing.** The keyer drains the greeting queue **one peer per loop
+iteration**, so only one peer's snapshot is in flight at a time. The TrxNet
+default `TRXNET_MAX_PENDING = 4` is enough: 2 slots for the snapshot + 2 slots
+of retry headroom. Multi-peer joins are staggered across loop iterations
+(~microseconds each) and never overlap in `_pending`.
+
+**Greeting defers until `freq != 0`.** Before the first CAT response, the
+keyer's `freq` is zero. Sending a `/hz = 0` snapshot to a peer that just joined
+would mislead the antenna switch / PA. The drain therefore waits until at
+least one valid CAT reading has populated `freq` — peers that join at boot
+get their snapshot once the keyer knows the radio's state (worst case ~200 ms
+in adaptive FAST polling, ~2 s in plain SLOW request mode, ~ms in sniff mode).
+
+**Do not override `TRXNET_MAX_PENDING` (or other limits) from the sketch with
+`#define`.** Arduino IDE compiles library `.cpp` files in a separate translation
+unit that does not see sketch-level macros — the resulting class-size mismatch
+causes a C++ ODR violation. Edit `TrxNet.h` directly if you need different
+values, or use PlatformIO `build_flags`.
+
+---
+
+## Frequency Latency — Sniff vs Request
+
+The latency between operator turning the VFO knob and a peer (e.g. antenna
+switch) receiving the new `/hz` depends on the CAT mode (`BAND_DECODER_IN`):
+
+| Mode | Latency | Notes |
+|------|---------|-------|
+| **Sniff** (CI-V transceive / Kenwood AI 2 / Yaesu auto-info) | ~ms | Radio pushes VFO change unsolicited; keyer parses and publishes immediately |
+| **Request** (keyer polls the radio) | up to `BAND_DECODER_REQUEST` ms | Default 2000 ms in idle, adaptive (see below) |
+
+**Recommendation for low-latency band switching:** enable transceive/auto-info
+on the radio so the keyer runs in sniff mode. This eliminates the polling
+latency entirely — no keyer config needed.
+
+| Radio | Setting |
+|-------|---------|
+| ICOM | Menu → SET → Connectors → CI-V → "CI-V Transceive: ON" |
+| Kenwood | `AI2;` command (or front-panel auto-info menu) |
+| Yaesu | Menu → CAT → Auto Info: ON |
+
+**Adaptive polling (request-mode fallback).** When sniff is not available, the
+keyer reduces request-mode latency adaptively: every detected change resets a
+timer and switches the poll interval to `BAND_DECODER_REQUEST_FAST` (200 ms)
+for `BAND_DECODER_ACTIVITY_HOLD` (10 000 ms). After 10 s of no change, the
+interval returns to the default `BAND_DECODER_REQUEST` (2000 ms) to spare the
+CAT bus during quiet periods.
+
+Constants are `#define` in [k3ng_keyer.ino](k3ng_keyer.ino#L1418-L1424) — adjust
+and rebuild to tune.
+
+---
+
 ## Public API Summary
 
 | Method | Description |
@@ -380,8 +468,10 @@ no manual guard is needed.
 | `void subscribe(const char* path, TrxNetCallback cb)` | Register a callback for a topic path. Registering the same path replaces the callback. |
 | `void unsubscribe(const char* path)` | Remove a subscription. |
 | `void publish(const char* path, const uint8_t* data, size_t len, TrxMsgType type = TRX_NON)` | Send payload to all known peers. `TRX_NON`: fire-and-forget. `TRX_CON`: retransmit until ACKed. |
+| `bool publishTo(const char* peerName, const char* path, const uint8_t* data, size_t len, TrxMsgType type = TRX_NON)` | Send payload to one named peer. Returns false on unknown peer or full CON queue. |
 | `int peerCount() const` | Number of currently active peers. |
 | `const TrxPeer* peer(int index) const` | Read-only access to peer by index. Returns NULL if out of range. |
+| `void onPeerAdded(TrxPeerCallback cb)` | Register a callback fired once per newly discovered peer. Used for state-snapshot greeting. |
 
 ---
 
