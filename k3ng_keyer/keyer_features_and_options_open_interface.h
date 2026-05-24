@@ -9,18 +9,18 @@
 // #define FEATURE_SERIAL_HELP
 
 #define FEATURE_COMMAND_BUTTONS
-#define FEATURE_MEMORIES
-#define FEATURE_MEMORY_MACROS
-#define FEATURE_WINKEY_EMULATION    // disabling Automatic Software Reset is highly recommended (see documentation)
+//#define FEATURE_MEMORIES                  // OI3: disabled - not used (CW via MQTT/web)
+//#define FEATURE_MEMORY_MACROS             // OI3: disabled - depends on MEMORIES
+//#define FEATURE_WINKEY_EMULATION          // OI3: disabled - replaced by MQTT/web input    // disabling Automatic Software Reset is highly recommended (see documentation)
 //#define FEATURE_BEACON
-#define FEATURE_CALLSIGN_RECEIVE_PRACTICE
+//#define FEATURE_CALLSIGN_RECEIVE_PRACTICE // OI3: disabled - training feature, not used
 //#define FEATURE_POTENTIOMETER         // do not enable unless you have a potentiometer connected, otherwise noise will falsely trigger wpm changes
 //#define FEATURE_HELL
 //#define FEATURE_PS2_KEYBOARD        // Use a PS2 keyboard to send code - Change keyboard layout (non-US) in K3NG_PS2Keyboard.h.  Additional options below.
 //#define FEATURE_USB_KEYBOARD          // Use a USB keyboard to send code - Uncomment three lines in k3ng_keyer.ino (search for note_usb_uncomment_lines)
 //#define FEATURE_DEAD_OP_WATCHDOG
 //#define FEATURE_AUTOSPACE
-#define FEATURE_FARNSWORTH
+//#define FEATURE_FARNSWORTH                // OI3: disabled - not used
 //#define FEATURE_DL2SBA_BANKSWITCH       // Switch memory banks feature as described here: http://dl2sba.com/index.php?option=com_content&view=article&id=131:nanokeyer&catid=15:shack&Itemid=27#english
 #define FEATURE_LCD_4BIT                // classic LCD disidefplay using 4 I/O lines
 //#define FEATURE_LCD_ADAFRUIT_I2C          // Adafruit I2C LCD display using MCP23017 at addr 0x20
@@ -33,7 +33,7 @@
 //#define FEATURE_USB_MOUSE                // Uncomment three lines in k3ng_keyer.ino (search for note_usb_uncomment_lines)
 //#define FEATURE_CAPACITIVE_PADDLE_PINS  // remove the bypass capacitors on the paddle_left and paddle_right lines when using capactive paddles
 //#define FEATURE_LED_RING                // Mayhew Labs Led Ring support
-#define FEATURE_ALPHABET_SEND_PRACTICE  // enables command mode S command - created by Ryan, KC2ZWM
+//#define FEATURE_ALPHABET_SEND_PRACTICE  // OI3: disabled - training feature, not used // enables command mode S command - created by Ryan, KC2ZWM
 #define FEATURE_PTT_INTERLOCK
 //#define FEATURE_QLF
 //#define FEATURE_EEPROM_E24C1024
@@ -45,20 +45,20 @@
 //#define OPTION_SUPPRESS_SERIAL_BOOT_MSG
 #define OPTION_INCLUDE_PTT_TAIL_FOR_MANUAL_SENDING
 #define OPTION_EXCLUDE_PTT_HANG_TIME_FOR_MANUAL_SENDING
-#define OPTION_SERIAL_PORT_DEFAULT_WINKEY_EMULATION  // Use when activating both FEATURE_WINKEY_EMULATION and FEATURE_COMMAND_LINE_INTERFACE simultaneously.  This will make Winkey emulation be the default at boot up; hold command button down at boot up to activate CLI mode
+//#define OPTION_SERIAL_PORT_DEFAULT_WINKEY_EMULATION  // OI3: disabled with WINKEY  // Use when activating both FEATURE_WINKEY_EMULATION and FEATURE_COMMAND_LINE_INTERFACE simultaneously.  This will make Winkey emulation be the default at boot up; hold command button down at boot up to activate CLI mode
 //#define OPTION_WINKEY_DISCARD_BYTES_AT_STARTUP     // if ASR is not disabled, you may need this to discard errant serial port bytes at startup
 //#define OPTION_WINKEY_STRICT_EEPROM_WRITES_MAY_WEAR_OUT_EEPROM // with this activated the unit will write non-volatile settings to EEPROM when set by Winkey commands
 //#define OPTION_WINKEY_SEND_WORDSPACE_AT_END_OF_BUFFER
-#define OPTION_WINKEY_STRICT_HOST_OPEN               // require an admin host open Winkey command before doing any other commands
-#define OPTION_WINKEY_2_SUPPORT                      // comment out to revert to Winkey version 1 emulation
-#define OPTION_WINKEY_INTERRUPTS_MEMORY_REPEAT
+//#define OPTION_WINKEY_STRICT_HOST_OPEN             // OI3: disabled with WINKEY  // require an admin host open Winkey command before doing any other commands
+//#define OPTION_WINKEY_2_SUPPORT                    // OI3: disabled with WINKEY  // comment out to revert to Winkey version 1 emulation
+//#define OPTION_WINKEY_INTERRUPTS_MEMORY_REPEAT     // OI3: disabled with WINKEY
 //#define OPTION_WINKEY_UCXLOG_9600_BAUD             // use this only with UCXLog configured for Winkey 9600 baud mode
-#define OPTION_WINKEY_2_HOST_CLOSE_NO_SERIAL_PORT_RESET  // activate this when using Winkey 2 emulation and Win-Test
+//#define OPTION_WINKEY_2_HOST_CLOSE_NO_SERIAL_PORT_RESET  // OI3: disabled with WINKEY  // activate this when using Winkey 2 emulation and Win-Test
 // #define OPTION_WINKEY_FREQUENT_STATUS_REPORT         // activate this to make Winkey emulation play better with RUMlog and RUMped
 //#define OPTION_WINKEY_IGNORE_LOWERCASE               // Enable for typical K1EL Winkeyer behavior (use for SkookumLogger version 1.10.14 and prior to workaround bug)
 //#define OPTION_REVERSE_BUTTON_ORDER                // This is mainly for the DJ0MY NanoKeyer http://nanokeyer.wordpress.com/
-#define OPTION_PROG_MEM_TRIM_TRAILING_SPACES         // trim trailing spaces from memory when programming in command mode
-#define OPTION_DIT_PADDLE_NO_SEND_ON_MEM_RPT         // this makes dit paddle memory interruption a little smoother
+//#define OPTION_PROG_MEM_TRIM_TRAILING_SPACES       // OI3: disabled with MEMORIES  // trim trailing spaces from memory when programming in command mode
+//#define OPTION_DIT_PADDLE_NO_SEND_ON_MEM_RPT       // OI3: disabled with MEMORIES  // this makes dit paddle memory interruption a little smoother
 //#define OPTION_MORE_DISPLAY_MSGS                     // additional optional display messages - comment out to save memory
 //#define OPTION_N1MM_WINKEY_TAB_BUG_WORKAROUND        // enable this to ignore the TAB key in the Send CW window (this breaks SO2R functionality in N1MM)
 //#define OPTION_WATCHDOG_TIMER                        // this enables a four second ATmega48/88/168/328 watchdog timer; use for unattended/remote operation only

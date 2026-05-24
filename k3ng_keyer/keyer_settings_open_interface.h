@@ -73,104 +73,23 @@
 #define number_of_memories byte(12)
 #endif
 
-#ifdef FEATURE_CAPACITIVE_PADDLE_PINS
-#define capacitance_threshold 2
-#endif //FEATURE_CAPACITIVE_PADDLE_PINS
-
-#ifdef FEATURE_LED_RING
-#define led_ring_low_limit 10
-#define led_ring_high_limit 50
-#endif //FEATURE_LED_RING
-
-#ifdef FEATURE_QLF
-#define qlf_dit_max 125
-#define qlf_dit_min 75
-#define qlf_dah_max 200
-#define qlf_dah_min 100
-#define qlf_on_by_default 0
-#endif //FEATURE_QLF
 
 
-#ifdef FEATURE_WINKEY_EMULATION
-  #ifdef OPTION_WINKEY_UCXLOG_9600_BAUD
-    #define WINKEY_DEFAULT_BAUD 9600
-  #else
-    #define WINKEY_DEFAULT_BAUD 1200
-  #endif //OPTION_WINKEY_UCXLOG_9600_BAUD
-// alter these below to map alternate sidetones for Winkey interface protocol emulation
-#ifdef OPTION_WINKEY_2_SUPPORT
-    #define WINKEY_SIDETONE_1 3759
-    #define WINKEY_SIDETONE_2 1879
-    #define WINKEY_SIDETONE_3 1252
-    #define WINKEY_SIDETONE_4 940
-    #define WINKEY_SIDETONE_5 752
-    #define WINKEY_SIDETONE_6 625
-    #define WINKEY_SIDETONE_7 535
-    #define WINKEY_SIDETONE_8 469
-    #define WINKEY_SIDETONE_9 417
-    #define WINKEY_SIDETONE_10 375
-  #else //OPTION_WINKEY_2_SUPPORT
-    #define WINKEY_SIDETONE_1 4000
-    #define WINKEY_SIDETONE_2 2000
-    #define WINKEY_SIDETONE_3 1333
-    #define WINKEY_SIDETONE_4 1000
-    #define WINKEY_SIDETONE_5 800
-    #define WINKEY_SIDETONE_6 666
-    #define WINKEY_SIDETONE_7 571
-    #define WINKEY_SIDETONE_8 500
-    #define WINKEY_SIDETONE_9 444
-    #define WINKEY_SIDETONE_10 400
-#endif //OPTION_WINKEY_2_SUPPORT
 
-#define WINKEY_1_REPORT_VERSION_NUMBER 10
-#define WINKEY_2_REPORT_VERSION_NUMBER 23
 
-// alter these to map to alternate hang time wordspace units
-#define WINKEY_HANG_TIME_1_0 1.0
-#define WINKEY_HANG_TIME_1_33 1.33
-#define WINKEY_HANG_TIME_1_66 1.66
-#define WINKEY_HANG_TIME_2_0 2.0
-
-#endif //FEATURE_WINKEY_EMULATION
 
 
 #define PRIMARY_SERIAL_PORT &Serial
 #define PRIMARY_SERIAL_PORT_BAUD 1200     // This applies only when the port is in Command Line Interface mode.  In Winkey mode it will default to 1200.
 
-#ifdef FEATURE_COMMAND_LINE_INTERFACE_ON_SECONDARY_PORT
-  #define SECONDARY_SERIAL_PORT &Serial1
-  #define SECONDARY_SERIAL_PORT_BAUD 115200
-#endif
 
 #define CW_DECODER_SCREEN_COLUMNS 40        // word wrap at this many columns
 #define CW_DECODER_SPACE_PRINT_THRESH 4.5   // print space if no tone for this many element lengths
 #define CW_DECODER_SPACE_DECODE_THRESH 2.0  // invoke character decode if no tone for this many element lengths
 #define CW_DECODER_NOISE_FILTER 20          // ignore elements shorter than this (mS)
 
-#ifdef FEATURE_DYNAMIC_DAH_TO_DIT_RATIO
-  #define DYNAMIC_DAH_TO_DIT_RATIO_LOWER_LIMIT_WPM 30
-  #define DYNAMIC_DAH_TO_DIT_RATIO_LOWER_LIMIT_RATIO 300 // 300 = 3:1 ratio
-  #define DYNAMIC_DAH_TO_DIT_RATIO_UPPER_LIMIT_WPM 70
-  #define DYNAMIC_DAH_TO_DIT_RATIO_UPPER_LIMIT_RATIO 240 // 240 = 2.4:1 ratio
-#endif //FEATURE_DYNAMIC_DAH_TO_DIT_RATIO
 
-#if defined(FEATURE_SLEEP)
-  #define KEYER_AWAKE_PIN_AWAKE_STATE HIGH
-  #define KEYER_AWAKE_PIN_ASLEEP_STATE LOW
-#endif
 
-#if defined(FEATURE_ETHERNET)
-  // #define FEATURE_ETHERNET_IP {192,168,1,178}                      // default IP address ("192.168.1.178")
-  // #define FEATURE_ETHERNET_MAC {0xDE,0xAD,0xBE,0xEF,0xFE,0xED}
-  #define FEATURE_ETHERNET_IP {192,168,1,179}                      // default IP address ("192.168.1.178")
-  #define FEATURE_ETHERNET_MAC {0xDE,0xAD,0xBE,0xEF,0xFE,0xEE}
-
-  #define FEATURE_ETHERNET_GATEWAY {192,168,1,1}                   // default gateway
-  #define FEATURE_ETHERNET_SUBNET_MASK {255,255,255,0}                  // default subnet mask
-  #define FEATURE_ETHERNET_WEB_LISTENER_PORT 80
-  #define FEATURE_UDP_SEND_BUFFER_SIZE 128
-  #define FEATURE_UDP_RECEIVE_BUFFER_SIZE 128
-#endif //FEATURE_ETHERNET
 
 #define WEB_SERVER_CONTROL_TX_KEY_TIME_LIMIT_SECS 10
 
